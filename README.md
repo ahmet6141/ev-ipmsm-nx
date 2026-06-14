@@ -1,0 +1,114 @@
+# motor_nx — Parametric EV Traction IPMSM generator for Siemens NX
+
+Otomasyon + parametrik bir **iç mıknatıslı senkron motor** (IPMSM) üreteci. Elektrikli
+araç traksiyon motorunu (radyal akı, V-mıknatıs, hairpin sargı) tek bir parametre
+setinden tam otomatik olarak Siemens NX'te katı modele dönüştürür ve STEP/Parasolid
+olarak dışa aktarır — başsız (headless) `run_journal.exe` batch akışında.
+
+![Varsayılan motorun kesiti](docs/cross_section_default.png)
+
+> 54 oluk / 6 kutup, q=3, hairpin sargı (oluk başına 8 bar), kutup başına tek V
+> (2 NdFeB mıknatıs), su soğutmalı ceket — Tesla Model 3 arka tahrik sınıfı.
+
+---
+
+## Mimari
+
+`tarik_xluuv_generator`'daki kanıtlanmış **params → saf-matematik blueprint → CAD
+builder** ayrımının Siemens NX'e taşınmış hâli:
+
+| Katman | Dosya | NX'e bağımlı mı? | Görevi |
+|---|---|---|---|
+| Parametreler | [motor_nx/params.py](motor_nx/params.py) | Hayır | Tüm tasarım girdileri (sweep dostu dataclass'lar, JSON I/O) |
+| Boyutlandırma | [motor_nx/em_design.py](motor_nx/em_design.py) | Hayır | Türetilmiş geometri, sargı faktörleri, **tasarım doğrulaması** |
+| Blueprint | [motor_nx/blueprint.py](motor_nx/blueprint.py) | Hayır | Saf-matematik geometri → sıralı CAD "build step" listesi + JSON |
+| Önizleme | [motor_nx/preview.py](motor_nx/preview.py) | Hayır | NX'siz SVG kesit (görsel doğrulama) |
+| NX builder | [motor_nx/nx_builder.py](motor_nx/nx_builder.py) | **Evet** | NXOpen Python ile build step'leri NX'te modele çevirir + export |
+| Batch sürücü | [batch_build.py](batch_build.py) | Hayır | run_journal.exe'yi sürer; parametre süpürme + manifest |
+| CLI | [motor_nx/cli.py](motor_nx/cli.py) | Hayır | rapor / doğrula / blueprint / önizleme |
+
+`params`, `em_design`, `blueprint`, `preview` düz CPython ile çalışır ve tamamen test
+edilebilir. Yalnızca `nx_builder` `NXOpen`'ı import eder; bu yüzden o, NX içinde
+`run_journal.exe` ile çalıştırılır.
+
+---
+
+## Hızlı başlangıç (NX gerektirmez)
+
+```bash
+# Tasarım özeti + doğrulama
+python -m motor_nx.cli report
+
+# Geometriyi görsel doğrula (SVG kesit)
+python -m motor_nx.cli preview -o preview.svg
+
+# NX builder'ın tükettiği blueprint JSON'u üret
+python -m motor_nx.cli blueprint -o blueprint.json
+
+# Geometri matematiği testleri
+python tests/test_blueprint.py
+```
+
+Özel bir tasarım için kısmi bir `MotorParams` JSON'u verin:
+
+```bash
+python -m motor_nx.cli report configs/my_design.json
+```
+
+## NX'te build (headless batch — hedef NX 2506)
+
+1. **Önce smoke test** (tek seferlik, API'yi NX 2506'da doğrular):
+   ```bat
+   "C:\Program Files\Siemens\NX2506\NXBIN\run_journal.exe" motor_nx\nx_smoketest.py -args C:\temp\nx_smoke > smoke.log 2>&1
+   ```
+   `smoke.log`'da `SMOKE TEST PASSED` görmelisiniz (bkz. [docs/NX_AUTOMATION.md](docs/NX_AUTOMATION.md)).
+
+2. NX kurulumunuzu gösterin (config'lerde `nx_root` zaten NX2506'ya ayarlı):
+   ```bat
+   set UGII_ROOT_DIR=C:\Program Files\Siemens\NX2506\NXBIN
+   set SPLM_LICENSE_SERVER=28000@lisans-sunucu
+   ```
+
+3. Tek motor:
+   ```bash
+   python batch_build.py configs/default.json
+   ```
+
+4. Parametre süpürme (stack × mıknatıs genişliği + 8-kutup varyantı):
+   ```bash
+   python batch_build.py configs/sweep_example.json
+   ```
+
+Her geçerli varyant için `build/` altında `<ad>.prt`, `<ad>_ap242.stp`, `<ad>.x_t`,
+`<ad>.log` ve bir `manifest.json` üretilir. **Geçersiz** varyantlar (doğrulamadan
+geçmeyen) NX'e hiç gönderilmeden raporlanıp atlanır.
+
+NX kurulu değilken bile `--dry-run` tüm blueprint'leri + doğrulamayı üretir:
+
+```bash
+python batch_build.py configs/sweep_example.json --dry-run
+```
+
+Tek bir journal'ı elle de çalıştırabilirsiniz:
+
+```bat
+"%UGII_ROOT_DIR%\run_journal.exe" motor_nx\nx_builder.py -args blueprint.json out.prt both
+```
+
+---
+
+## Parametreyi değiştirme
+
+Tüm tasarım [motor_nx/params.py](motor_nx/params.py)'deki dataclass'lardan gelir.
+İki yol:
+
+- **Kodda:** `MotorParams()` örneğinin alanlarını düzenleyin veya
+  `params.overridden(**{"rotor.magnet_width": 28, "stack_length": 150})`.
+- **JSON'da:** config'in `base` / `sweep` / `variants` bölümleri (bkz.
+  [configs/sweep_example.json](configs/sweep_example.json)).
+
+`em_design.validate()` her build'den önce geometrik olarak imkânsız kombinasyonları
+(negatif kalınlık, kutbu aşan mıknatıs, sığmayan iletken, …) yakalar.
+
+Tasarım gerekçesi ve parametre tablosu için [docs/DESIGN.md](docs/DESIGN.md);
+NXOpen otomasyon ayrıntıları için [docs/NX_AUTOMATION.md](docs/NX_AUTOMATION.md).

@@ -1,0 +1,23 @@
+{
+  "name": "ev_rdu_ipmsm",
+  "output_dir": "build/sweep",
+  "export": "step",
+  "nx_root": "C:/Program Files/Siemens/NX2506/NXBIN",
+  "_comment": "Cartesian sweep over stack length x magnet width, plus one explicit 8-pole/48-slot variant. Invalid points are auto-skipped. 'nx_root' points at NX 2506; drop --dry-run to actually build in NX.",
+  "sweep": {
+    "stack_length": [120, 134, 150],
+    "rotor.magnet_width": [24, 26, 28]
+  },
+  "variants": [
+    {
+      "name": "8pole_48slot",
+      "overrides": {
+        "rotor.pole_count": 8,
+        "stator.slot_count": 48,
+        "rotor.magnet_width": 20,
+        "rotor.vertex_gap": 34,
+        "rotor.v_angle_deg": 110
+      }
+    }
+  ]
+}

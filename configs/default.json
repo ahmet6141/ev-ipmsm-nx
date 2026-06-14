@@ -1,0 +1,8 @@
+{
+  "name": "ev_rdu_ipmsm",
+  "output_dir": "build",
+  "export": "both",
+  "nx_root": "C:/Program Files/Siemens/NX2506/NXBIN",
+  "_comment": "Single-build of the default EV traction IPMSM. 'nx_root' points at the NX 2506 install (or set $UGII_ROOT_DIR). Override any parameter under 'base', e.g. \"base\": { \"stack_length\": 150, \"rotor\": { \"magnet_width\": 28 } }.",
+  "base": {}
+}
