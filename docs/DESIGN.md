@@ -7,6 +7,13 @@ NdFeB mıknatıslı, dağıtık **hairpin** sargılı, su/yağ soğutmalı bir I
 Hedef performans bandı (referans): ~150–220 kW tepe güç, ~350–420 Nm tepe tork,
 taban hız ~5–6k rpm, maksimum hız ~16–18k rpm, DC bara 400–800 V.
 
+> **Hedef band ≠ birinci-mertebe tahmin.** Yukarısı tasarım hedefidir. Koddaki
+> analitik tahmin (`cli report` / `cli analysis`, 400V SVPWM tavanı Vdc/√6 ile):
+> tepe tork ~473 Nm, tepe güç ~172 kW, taban hız ~3480 rpm, **termal-sınırlı
+> sürekli tork ~172 Nm** (J≈9.8 A/mm²). Bunlar ±%20-30 birinci-mertebe değerlerdir;
+> taban hızı/sürekli anma alan-zayıflatma + FEA ile rafine edilir. 800V varyantında
+> aynı geometri daha yüksek taban hızına çıkar (sargı turları ile).
+
 Değerler aşağıdaki kaynaklara dayanır: Tesla Model 3 teardown/FEA analizleri
 (MotorXP), hairpin sargı tasarım literatürü ve elektrikli makine tasarım
 referansları (bkz. dosya sonundaki kaynaklar).

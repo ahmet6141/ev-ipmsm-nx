@@ -81,6 +81,23 @@ FEA paketini de loglar/üretir.
   hairpin/gövde) + 16 adımlı montaj sırası + EOL test + kaynaklar.
 - Commit'lendi + push edildi (`ev-ipmsm-nx`).
 
+## Derin denetim & iyileştirme (2026-06-15)
+6-boyutlu çok-ajanlı denetim (53 ajan): **47 bulgu, 47'si doğrulandı** → 41 düzeltildi,
+6 ertelendi/kabul. Detay+çözüm: `docs/AUDIT.md`. Commit'ler C1–C6:
+- **C1 fizik/doğrulama** (em_design): taban-hız tavanı Vdc/√6 (SVPWM) düzeltildi
+  (4307→3480 rpm); validate() boşlukları (d-ekseni nervür erozyonu, şaft borusu,
+  sıfır iletken/yol, tangansiyel bar, negatif boşluk, ters ceket, yuvarlak-cep içi mıknatıs).
+- **C2 tutarlılık**: Hcb Br/μ_recoil'den türetilir (915→970); slot_fill net 0.60;
+  segment boşluğu 0.1; M250-27 grade; NX birimleri (count/mm/deg); BOM mass_by_material.
+- **C3 kod-kalite**: `blueprint.iter_cross_section` (3 modüldeki kopya kesit projeksiyonu
+  birleşti); gerçek `coil_span_slots`→kp; obfuske mıknatıs-anchor temizlendi.
+- **C4 eksik analizler — `motor_nx/analysis.py`**: kayıp dökümü (demir/AC-bakır/mıknatıs-eddy),
+  **termal sürekli-anma** (kayıp→sıcaklık, J_cont≈9.8 termal-sınırlı), demag marjı, rotor
+  santrifüj gerilmesi (SF), cogging indeksi; BOM **maliyet** (mıknatıs payı %43), hesaplanan
+  **eksantriklik yığılımı**; CLI `analysis`.
+- **C5 testler**: test_analysis/em_design/fea → toplam **43/43**.
+- **C6**: doküman uzlaştırma + `docs/AUDIT.md` + bu kayıt.
+
 ---
 
 ## Dosya/çıktı durumu
