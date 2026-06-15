@@ -12,7 +12,9 @@
    - ✅ Tolerans/GD&T şeması — `manufacturing.py` (12 özellik, web-temelli + denetlendi).
    - ✅ **BOM** — `manufacturing.py` (modelden kütle/adet; CLI `bom`/`tolerances` + CSV).
    - ✅ Lamine/mıknatıs/sargı/gövde süreç notları + montaj sırası — `docs/MANUFACTURING.md`.
-   - ⬜ KALAN: imalat **resimleri** (NX drafting veya STEP'ten 2D), kalıp/kesim resim seti.
+   - ✅ **2D imalat resimleri** — `motor_nx/drawings.py` (ölçülü DXF+SVG; montaj/stator/rotor;
+     CLI `drawings`). **Adım 5 TAMAM.**
+   - ⬜ Opsiyonel: resmi NX Drafting çıktısı (antet/GD&T çerçevesi), kalıp/kesim resim seti.
 2. **Temizlik:** test çıktılarını sil → `motor_v2..v8.*`, `motor_hairpin*.*`, `nx_smoke*.*`,
    geçici `_perf.py` / `_fea.py`. (Kullanıcı onayı gerek — kalıcı silme.)
 3. **Commit/push:** değişiklikleri `git add/commit/push` ile `ev-ipmsm-nx` repoya gönder

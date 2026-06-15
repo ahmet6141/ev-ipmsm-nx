@@ -24,6 +24,7 @@ builder** ayrımının Siemens NX'e taşınmış hâli:
 | Blueprint | [motor_nx/blueprint.py](motor_nx/blueprint.py) | Hayır | Saf-matematik geometri → sıralı CAD "build step" listesi + JSON |
 | Önizleme | [motor_nx/preview.py](motor_nx/preview.py) | Hayır | NX'siz SVG kesit (görsel doğrulama) |
 | İmalat | [motor_nx/manufacturing.py](motor_nx/manufacturing.py) | Hayır | Geometriden BOM (kütle/adet) + GD&T tolerans şeması |
+| Resimler | [motor_nx/drawings.py](motor_nx/drawings.py) | Hayır | Ölçülendirilmiş 2D imalat resimleri (DXF + SVG) |
 | FEA | [motor_nx/fea.py](motor_nx/fea.py) | Hayır | FEA hand-off paketi (spec JSON + DXF + sargı haritası) |
 | NX builder | [motor_nx/nx_builder.py](motor_nx/nx_builder.py) | **Evet** | NXOpen Python ile build step'leri NX'te modele çevirir + export |
 | Batch sürücü | [batch_build.py](batch_build.py) | Hayır | run_journal.exe'yi sürer; parametre süpürme + manifest |
@@ -50,6 +51,9 @@ python -m motor_nx.cli blueprint -o blueprint.json
 # İmalat: malzeme listesi (BOM) + GD&T tolerans şeması
 python -m motor_nx.cli bom --csv bom.csv
 python -m motor_nx.cli tolerances --csv tol.csv
+
+# 2D imalat resimleri (DXF + SVG): montaj / stator / rotor
+python -m motor_nx.cli drawings -o drawings/
 
 # FEA hand-off paketi (spec + DXF + sargı haritası)
 python -m motor_nx.cli fea -o fea/

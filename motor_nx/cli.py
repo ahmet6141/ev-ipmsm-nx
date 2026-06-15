@@ -8,6 +8,7 @@ manufacturing/FEA hand-off data -- all without Siemens NX.
     python -m motor_nx.cli fea          [config.json] [-o fea/]   FEA hand-off package
     python -m motor_nx.cli bom          [config.json] [--csv b.csv]  Bill of Materials
     python -m motor_nx.cli tolerances   [config.json] [--csv t.csv]  GD&T scheme
+    python -m motor_nx.cli drawings     [config.json] [-o drawings/] 2D drawings (DXF+SVG)
 
 `config.json` is a (possibly partial) MotorParams dict; omit it for the default
 EV traction variant. The blueprint JSON is the exact input the NX builder
@@ -55,6 +56,10 @@ def main(argv=None):
     p_tol = sub.add_parser("tolerances", help="critical-dimension / GD&T scheme")
     p_tol.add_argument("config", nargs="?")
     p_tol.add_argument("--csv", help="also write the tolerance table to this CSV path")
+
+    p_dwg = sub.add_parser("drawings", help="2D manufacturing drawings (DXF + SVG): assembly, stator, rotor")
+    p_dwg.add_argument("config", nargs="?")
+    p_dwg.add_argument("-o", "--out", default="drawings")
 
     args = parser.parse_args(argv)
     params = _load_params(args.config)
@@ -115,6 +120,15 @@ def main(argv=None):
                 wr.writerow([])
                 wr.writerow(["TOTAL", "", "", bom["total_mass_kg"], "modelled mass"])
             print("\nwrote %s" % args.csv)
+        return 0
+
+    if args.cmd == "drawings":
+        import datetime
+        from . import drawings
+        written = drawings.write_drawings(params, args.out, datetime.date.today().isoformat())
+        print("wrote %d 2D drawing files to %s/:" % (len(written), args.out))
+        for path in written:
+            print("  ", path)
         return 0
 
     if args.cmd == "tolerances":

@@ -31,3 +31,6 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+
+# generated 2D drawing output (regenerate via cli drawings)
+/drawings/

@@ -12,7 +12,29 @@ BOM ve tolerans tabloları modelden türetilir — parametre değişince güncel
 python -m motor_nx.cli bom                 # kütle + adet
 python -m motor_nx.cli bom --csv bom.csv
 python -m motor_nx.cli tolerances --csv tol.csv
+python -m motor_nx.cli drawings -o drawings/  # 2D resimler (DXF + SVG)
 ```
+
+---
+
+## 0. 2D imalat resimleri
+
+`drawings` komutu modelden doğrudan **ölçülendirilmiş 2D resimler** üretir (her biri
+**DXF** + **SVG**): montaj kesiti, stator lamine detayı, rotor lamine detayı. DXF
+imalat standardıdır (NX / AutoCAD / LibreCAD ile açılır); SVG ekran incelemesi için.
+Resimler 1:1 mm; çap ölçüleri + leader notları + merkez çizgileri + antet + not/BOM
+bloğu içerir ([motor_nx/drawings.py](../motor_nx/drawings.py)).
+
+![Montaj kesiti resmi](drawing_assembly.png)
+
+| Sayfa | İçerik |
+|---|---|
+| 1 — Montaj | Tam kesit; Ø housing/stator/bore/rotor/şaft; hava aralığı + ceket notları; antet + BOM tablosu |
+| 2 — Stator | Lamine; OD/bore; oluk ağzı/genişlik/derinlik/diş/back-iron notları; imalat notları |
+| 3 — Rotor | Lamine + 6 V-kutup; rotor OD/şaft bore; mıknatıs W×t / V-açı / köprü / nervür; magnetizasyon + balans notları |
+
+> Bunlar **veri-temelli yardımcı resimlerdir** (ölçüler model parametrelerinden); resmi
+> imalat resim seti için NX Drafting'te antet/GD&T çerçevesi + tedarikçi onayı gerekir.
 
 ---
 
