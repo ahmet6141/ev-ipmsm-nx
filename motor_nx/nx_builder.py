@@ -1,7 +1,7 @@
 """Siemens NX builder -- consumes a blueprint and replays its build steps with
 the NXOpen Python API. RUN INSIDE NX (headless) via run_journal.exe:
 
-    "%UGII_ROOT_DIR%\\run_journal.exe" nx_builder.py -args <blueprint.json> <out.prt> [step|parasolid|both|none]
+    "%UGII_ROOT_DIR%\\run_journal.exe" nx_builder.py -args <blueprint.json> <out.prt> [step|parasolid|both|none] [parts]
 
 This is the ONLY module that imports NXOpen, so it never runs under the plain
 CPython test interpreter -- it is exercised inside a real NX session.
@@ -404,6 +404,23 @@ class MotorBuilder:
         n_solids = sum(1 for b in self.part.Bodies if b.IsSolidBody)
         self.log("built %d solid bodies, %d step error(s)" % (n_solids, len(self.errors)))
 
+    def export_parts(self, base, flavor="ap242"):
+        """Export each manufacturable COMPONENT as its own STEP file (piece-by-piece
+        production hand-off): Stator_Lamination, Rotor_Lamination, Magnets, Winding,
+        Shaft, Housing. Bodies are grouped from the build-step registry by role."""
+        groups = {}
+        for sid, body in self.bodies.items():
+            comp = _component_of(sid)
+            if comp and body is not None:
+                groups.setdefault(comp, []).append(body)
+        for comp, bodies in sorted(groups.items()):
+            path = "%s_%s.stp" % (base, comp)
+            try:
+                export_step(self.part, path, flavor, bodies)
+                self.log("part export: %-18s %d body(ies) -> %s" % (comp, len(bodies), path))
+            except Exception:
+                self.log("part export FAILED %s:\n%s" % (comp, traceback.format_exc()))
+
 
 # --------------------------------------------------------------------------- #
 # export  (hardened: solid-body selection, Parasolid fallback fixed)
@@ -413,7 +430,9 @@ def _save(part):
               NXOpen.BasePart.CloseAfterSave.FalseValue)
 
 
-def export_step(part, out_path, flavor="ap242"):
+def export_step(part, out_path, flavor="ap242", bodies=None):
+    """Export STEP. bodies=None -> all solid bodies; else just the given bodies
+    (used for per-part / piece-by-piece production hand-off files)."""
     _save(part)
     if os.path.exists(out_path):
         try:
@@ -428,7 +447,8 @@ def export_step(part, out_path, flavor="ap242"):
     }[flavor]
     sc.ObjectTypes.Solids = True
     sc.ObjectTypes.Surfaces = True
-    bodies = [b for b in part.Bodies if b.IsSolidBody]
+    if bodies is None:
+        bodies = [b for b in part.Bodies if b.IsSolidBody]
     sc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.SelectedObjects
     sc.ExportSelectionBlock.SelectionComp.Add(bodies)
     sc.InputFile = part.FullPath
@@ -437,6 +457,24 @@ def export_step(part, out_path, flavor="ap242"):
     sc.LayerMask = "1-256"
     sc.Commit()
     sc.Destroy()
+
+
+# component grouping for per-part export (by build-step id prefix in the registry)
+def _component_of(step_id):
+    base = step_id.split("#")[0]
+    if base.startswith("stator_steel"):
+        return "Stator_Lamination"
+    if base.startswith("rotor_steel"):
+        return "Rotor_Lamination"
+    if base.startswith("magnet"):          # magnet solids (pockets are subtracts, not registered)
+        return "Magnets"
+    if base.startswith("conductor") or base.startswith("endwinding") or base.startswith("hp_"):
+        return "Winding"
+    if base == "shaft":
+        return "Shaft"
+    if base == "housing":
+        return "Housing"
+    return None
 
 
 def export_parasolid(part, out_path):
@@ -490,8 +528,9 @@ def _default_blueprint(end_winding_style=None):
 
 def main():
     # Flexible args (order-free): a .json is a blueprint, a .prt is the output,
-    # step|parasolid|both|none picks export, nxpatterns enables NX pattern features.
-    # With NO blueprint given, the default EV IPMSM is built.
+    # step|parasolid|both|none picks the whole-part export, "parts" ALSO writes each
+    # component as its own STEP (piece-by-piece), nxpatterns enables NX pattern
+    # features. With NO blueprint given, the default EV IPMSM is built.
     blueprint = None
     out_prt = None
     export_mode = "both"
@@ -510,6 +549,7 @@ def main():
         else:
             out_prt = a + ".prt"
     hairpin = any("hairpin" in a.lower() for a in sys.argv[1:])
+    per_part = any(a.lower() == "parts" for a in sys.argv[1:])  # also export each component as its own STEP
     default_design = blueprint is None
     if blueprint is None:
         blueprint = _default_blueprint("hairpin" if hairpin else None)
@@ -555,6 +595,9 @@ def main():
             builder.log("exported %s.x_t" % base)
         if export_mode == "none":
             _save(part)
+        if per_part:
+            builder.log("--- per-part (piece-by-piece) STEP export ---")
+            builder.export_parts(base)
     except Exception:
         builder.log("EXPORT FAILED:\n" + traceback.format_exc())
 

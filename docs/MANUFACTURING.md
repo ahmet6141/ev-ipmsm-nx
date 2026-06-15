@@ -158,6 +158,47 @@ yatak akımını engelle). Keçeler FKM/HNBR; içi boş 45 mm şaft rotor soğut
 
 ---
 
+## 4b. Parça-başına üretim yöntemi + NX CAM kapsamı
+
+3D model tek NX parçasında **ayrı katı gövdeler** olarak üretilir. Üretim için her
+bileşeni **kendi STEP dosyasına** ayırmak gerekir (CAM tek parça işler):
+
+```bat
+"%UGII_ROOT_DIR%\run_journal.exe" motor_nx\nx_builder.py -args out.prt both parts
+```
+`parts` argümanı `out_Stator_Lamination.stp`, `out_Rotor_Lamination.stp`,
+`out_Magnets.stp`, `out_Winding.stp`, `out_Shaft.stp`, `out_Housing.stp` üretir.
+
+**Önemli: her parça CAM-talaşlı değildir.** Doğru yöntem parçaya göre değişir:
+
+| Parça | Üretim yöntemi | NX CAM? | Girdi |
+|---|---|---|---|
+| Stator lamine | **Pres kalıbı** (progressive die) / lazer kesim | ❌ (talaş değil; 2D profil) | `cross_section.dxf` / Stator STEP |
+| Rotor lamine | **Pres kalıbı** / lazer; sonra paketle-bağla | ❌ | `cross_section.dxf` / Rotor STEP |
+| Mıknatıs (N42SH) | **Tedarikçi**: sinter + taşlama (ısmarlama) | ❌ | Magnets STEP (ölçü/şekil ref) |
+| Hairpin sargı | **Tel-form**: kes/bük/yerleştir/kaynak | ❌ (tel işleme) | Winding STEP + winding.csv |
+| **Şaft** | **CNC tornalama** (+ kama/spline frezeleme) | ✅ **NX CAM (turning)** | **Shaft STEP/.prt** |
+| **Gövde** | Döküm + **CNC finiş frezeleme** (yatak yuvaları, yüzeyler) | ✅ **NX CAM (milling)** | **Housing STEP/.prt** |
+
+**NX CAM akışı (yalnız şaft + gövde):**
+1. Parçayı NX'te aç (`out.prt` içindeki ilgili gövde, veya parça STEP'ini içe aktar).
+2. **File → New → Manufacturing** (veya Application → Manufacturing); CAM setup şablonu seç
+   (şaft için `turning`, gövde için `mill_planar`/`mill_contour`).
+3. Geometri/stok (blank), koordinat sistemi (MCS), takım kütüphanesi tanımla.
+4. Operasyonları oluştur (tornalama: kaba/finiş/kanal; frezeleme: yüz/cep/delik),
+   **simüle et + gouge kontrolü**, post-processor ile NC kodu (G-code) üret.
+5. Kritik ölçüler `docs/MANUFACTURING.md` tolerans tablosundan: rulman yatakları k5
+   (Ra ≤ 0.4 µm taşlama), eş-eksenlilik 0.01.
+
+> **Durum:** Parça-başına STEP export **hazır** (`parts` argümanı). NX CAM toolpath'leri
+> **kullanıcı/CAM mühendisi tarafından NX Manufacturing'de** kurulur — takım kütüphanesi,
+> stok, post-processor tezgaha özgüdür ve NX'te simülasyon/gouge doğrulaması ister;
+> üretici betikle (NXOpen CAM) kör toolpath üretmek doğrulanamayacağı için önerilmez.
+> Lamineler için CAM yok — stator/rotor kesit profili (`cross_section.dxf`) kalıp/lazer
+> için doğrudan kullanılır.
+
+---
+
 ## 5. Kaynaklar (araştırma workflow'undan)
 - MDPI Energies 17(8):1913 — *Influence of Motor Manufacturing Tolerances on EOL Testing*
 - Nature SR 41598-024-68632-z / PMC11283456 — PMSM EV hava aralığı eksantrikliği (<%10)
