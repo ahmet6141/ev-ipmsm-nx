@@ -1,0 +1,494 @@
+{
+  "name": "EV_IPMSM_traction",
+  "machine": "interior-PM synchronous (IPMSM), single-V rotor",
+  "geometry_mm": {
+    "stator_OD": 225.0,
+    "stator_bore": 161.0,
+    "rotor_OD": 159.6,
+    "shaft_OD": 45.0,
+    "air_gap": 0.7,
+    "stack_length": 134.0,
+    "slots": 54,
+    "poles": 6,
+    "back_iron_mm": 13.0,
+    "tooth_width_mm": 5.6,
+    "outer_bridge_mm": 1.0,
+    "center_post_halfwidth_mm": 1.0
+  },
+  "symmetry_and_bc": {
+    "fea_sector": "1 pole",
+    "sector_angle_deg": 60.0,
+    "radial_cut_faces": "ANTI-periodic (odd) master/slave  -- field repeats with sign flip each pole",
+    "alt_sector": "1 pole-pair (120.0 deg) with EVEN (periodic) master/slave",
+    "outer_boundary": "magnetic vector potential A = 0 on the stator OD",
+    "axisymmetry_note": "2D planar EM is standard for radial-flux IPMSM; end effects via the analytical end-leakage / 3D check"
+  },
+  "materials": {
+    "lamination": {
+      "grade": "0.27 mm NO silicon steel (M250-27 class)",
+      "thickness_mm": 0.27,
+      "stacking_factor": 0.96,
+      "density_kg_m3": 7650,
+      "BH_H_A_per_m": [
+        0,
+        50,
+        100,
+        150,
+        200,
+        300,
+        500,
+        1000,
+        2000,
+        5000,
+        10000,
+        30000,
+        80000
+      ],
+      "BH_B_T": [
+        0,
+        0.55,
+        0.95,
+        1.18,
+        1.33,
+        1.49,
+        1.6,
+        1.71,
+        1.8,
+        1.9,
+        1.96,
+        2.05,
+        2.2
+      ],
+      "core_loss_W_per_kg_at_1.5T_50Hz": 2.3,
+      "note": "REPLACE with the vendor datasheet BH + Bertotti/Steinmetz loss coefficients for the final run"
+    },
+    "magnet": {
+      "grade": "N42SH",
+      "Br_T_at_20C": 1.28,
+      "Hcb_kA_per_m": 915,
+      "Hcj_kA_per_m": 1592.0,
+      "mu_recoil": 1.05,
+      "Br_tempco_pct_per_C": -0.12,
+      "Hcj_tempco_pct_per_C": -0.55,
+      "max_service_C": 150.0,
+      "density_kg_m3": 7500,
+      "resistivity_uOhm_m": 1.4,
+      "axial_segments": 4,
+      "note": "demag check uses the B-H 2nd-quadrant knee at the hot operating temp"
+    },
+    "conductor": {
+      "material": "copper",
+      "conductivity_S_per_m_20C": 59600000.0,
+      "temp_coeff_per_C": 0.00393,
+      "insulation_class": "H (180 C) hairpin enamel",
+      "slot_fill_factor": 0.62
+    },
+    "shaft": {
+      "material": "alloy steel (e.g. 42CrMo4), yield ~750 MPa"
+    },
+    "housing": {
+      "material": "cast aluminium (water jacket)"
+    }
+  },
+  "winding": {
+    "type": "double-layer integer-slot lap, full pitch, hairpin",
+    "phases": 3,
+    "q_slots_per_pole_per_phase": 3.0,
+    "conductors_per_slot": 8,
+    "parallel_paths": 2,
+    "series_turns_per_phase": 36,
+    "coil_pitch_slots": 9,
+    "winding_factor_kw": 0.9598,
+    "d_axis": "rotor magnet-V symmetry axis on +X for the reference pole",
+    "slot_phase_map": [
+      {
+        "slot": 0,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 1,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 2,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 3,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 4,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 5,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 6,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 7,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 8,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 9,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 10,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 11,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 12,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 13,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 14,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 15,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 16,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 17,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 18,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 19,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 20,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 21,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 22,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 23,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 24,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 25,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 26,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 27,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 28,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 29,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 30,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 31,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 32,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 33,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 34,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 35,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 36,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 37,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 38,
+        "phase": "A",
+        "sign": "+"
+      },
+      {
+        "slot": 39,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 40,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 41,
+        "phase": "C",
+        "sign": "-"
+      },
+      {
+        "slot": 42,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 43,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 44,
+        "phase": "B",
+        "sign": "+"
+      },
+      {
+        "slot": 45,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 46,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 47,
+        "phase": "A",
+        "sign": "-"
+      },
+      {
+        "slot": 48,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 49,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 50,
+        "phase": "C",
+        "sign": "+"
+      },
+      {
+        "slot": 51,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 52,
+        "phase": "B",
+        "sign": "-"
+      },
+      {
+        "slot": 53,
+        "phase": "B",
+        "sign": "-"
+      }
+    ]
+  },
+  "excitation": {
+    "rated_current_A_rms": 130,
+    "peak_current_A_rms": 282,
+    "current_advance_angle_deg_from_q_axis": [
+      0,
+      5,
+      10,
+      15,
+      20,
+      25,
+      30,
+      35,
+      40,
+      45
+    ],
+    "note": "sweep beta to locate MTPA; IPM saliency contributes reluctance torque"
+  },
+  "operating_points": {
+    "dc_bus_V": 350.0,
+    "base_speed_rpm": 4307,
+    "max_speed_rpm": 18000,
+    "corner_torque_Nm": 473,
+    "continuous_torque_Nm": 218
+  },
+  "mesh": {
+    "airgap_radial_layers": 3,
+    "airgap_element_mm": 0.233,
+    "refine": [
+      "outer_bridge",
+      "center_post",
+      "tooth_tips",
+      "magnet_corners"
+    ],
+    "global_element_mm": 2.0
+  },
+  "analyses": [
+    {
+      "id": "cogging",
+      "domain": "EM",
+      "what": "cogging torque vs rotor angle (no current, fine steps over 1 slot pitch)"
+    },
+    {
+      "id": "back_emf",
+      "domain": "EM",
+      "what": "open-circuit phase flux-linkage & back-EMF at base speed; magnitude vs Vdc + harmonic (THD)"
+    },
+    {
+      "id": "flux_ld_lq",
+      "domain": "EM",
+      "what": "flux linkage maps -> Ld, Lq vs (id, iq); saliency ratio"
+    },
+    {
+      "id": "torque_angle",
+      "domain": "EM",
+      "what": "average torque vs current advance angle at rated & peak current -> MTPA locus"
+    },
+    {
+      "id": "torque_ripple",
+      "domain": "EM",
+      "what": "instantaneous torque vs rotor angle at MTPA -> ripple %"
+    },
+    {
+      "id": "demag",
+      "domain": "EM",
+      "what": "worst-case demag: peak q-axis-opposing current at max magnet temp; check min magnet B vs knee"
+    },
+    {
+      "id": "losses",
+      "domain": "EM",
+      "what": "iron loss (stator/rotor), magnet eddy loss (with axial segmentation), AC copper loss (skin/proximity in hairpins)"
+    },
+    {
+      "id": "efficiency_map",
+      "domain": "EM",
+      "what": "efficiency over the torque-speed envelope (field weakening above base speed)"
+    },
+    {
+      "id": "jacket_thermal",
+      "domain": "Thermal",
+      "what": "water-jacket cooled steady-state temps from EM losses; winding & MAGNET hotspot vs limits; continuous rating"
+    },
+    {
+      "id": "rotor_stress",
+      "domain": "Structural",
+      "what": "centrifugal von Mises in the outer bridges & center post at 1.2x max speed; magnet retention"
+    },
+    {
+      "id": "rotordynamics",
+      "domain": "Structural",
+      "what": "shaft-rotor 1st bending critical speed > max operating speed with margin"
+    }
+  ],
+  "acceptance_targets": {
+    "peak_torque_Nm_min": 426,
+    "continuous_torque_Nm_min": 197,
+    "torque_ripple_pct_max": 5.0,
+    "cogging_pct_of_rated_max": 1.0,
+    "no_demag_at": "peak current AND 150 C magnet temp",
+    "magnet_temp_C_max_continuous": 150.0,
+    "rotor_vonMises_safety_factor_min_at_1.2x_maxspeed": 1.5,
+    "peak_efficiency_pct_min": 95.0
+  },
+  "tools": {
+    "em_2d": [
+      "Ansys Maxwell 2D",
+      "Ansys/Motor-CAD E-Magnetic",
+      "FEMM / pyFEMM (free)"
+    ],
+    "thermal": [
+      "Motor-CAD Thermal",
+      "Ansys Mechanical/Fluent",
+      "lumped-parameter network"
+    ],
+    "structural": [
+      "Ansys Mechanical",
+      "any rotor-stress FEA"
+    ]
+  }
+}

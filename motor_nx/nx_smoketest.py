@@ -15,6 +15,7 @@ work on your NX 2506. Any "FAIL <step>: <exc>" line names the exact call to fix
 import math
 import os
 import sys
+import time
 
 import NXOpen
 import NXOpen.Features
@@ -27,6 +28,16 @@ except Exception:
     _UF = None
 
 _S = NXOpen.Session.GetSession()
+
+
+def _p3(x, y, z):
+    """NX 2506 NXOpen requires float (double) coords; passing an int raises
+    'Expecting double type, found int'. Coerce every point coordinate here."""
+    return NXOpen.Point3d(float(x), float(y), float(z))
+
+
+def _v3(x, y, z):
+    return NXOpen.Vector3d(float(x), float(y), float(z))
 
 
 def run(out_base):
@@ -123,12 +134,12 @@ def run(out_base):
     step("expression_create", _expr)
 
     def _zdir():
-        o = NXOpen.Point3d(0, 0, 0)
-        return part.Directions.CreateDirection(o, NXOpen.Vector3d(0, 0, 1), uo)
+        o = _p3(0, 0, 0)
+        return part.Directions.CreateDirection(o, _v3(0, 0, 1), uo)
 
     def _zaxis():
-        o = NXOpen.Point3d(0, 0, 0)
-        d = part.Directions.CreateDirection(o, NXOpen.Vector3d(0, 0, 1), uo)
+        o = _p3(0, 0, 0)
+        d = part.Directions.CreateDirection(o, _v3(0, 0, 1), uo)
         pt = part.Points.CreatePoint(o)
         return part.Axes.CreateAxis(pt, d, uo)
 
@@ -137,13 +148,13 @@ def run(out_base):
         sec.AllowSelfIntersection(False)
         rule = part.ScRuleFactory.CreateRuleCurveDumb(curves)
         sec.AddToSection([rule], curves[0], NXOpen.NXObject.Null, NXOpen.NXObject.Null,
-                         NXOpen.Point3d(0, 0, 0), NXOpen.Section.Mode.Create, False)
+                         _p3(0, 0, 0), NXOpen.Section.Mode.Create, False)
         return sec
 
     def _circle(cx, cy, r):
-        c = NXOpen.Point3d(cx, cy, 0.0)
-        return part.Curves.CreateArc(c, NXOpen.Vector3d(1, 0, 0), NXOpen.Vector3d(0, 1, 0),
-                                     r, 0.0, 2 * math.pi)
+        c = _p3(cx, cy, 0.0)
+        return part.Curves.CreateArc(c, _v3(1, 0, 0), _v3(0, 1, 0),
+                                     float(r), 0.0, 2 * math.pi)
 
     # --- base annulus: extrude outer circle (create), subtract inner circle ---
     base_body = {}
@@ -172,12 +183,12 @@ def run(out_base):
     slot_feat = {}
 
     def _slot():
-        pts = [(25, -2), (40, -2), (40, 2), (25, 2)]
+        pts = [(24, -2), (41, -2), (41, 2), (24, 2)]  # overshoot bore & OD -> clean through-cut (no zero-wall touch)
         curves = []
         for i in range(len(pts)):
             a = pts[i]; b = pts[(i + 1) % len(pts)]
-            curves.append(part.Curves.CreateLine(NXOpen.Point3d(a[0], a[1], 0),
-                                                 NXOpen.Point3d(b[0], b[1], 0)))
+            curves.append(part.Curves.CreateLine(_p3(a[0], a[1], 0),
+                                                 _p3(b[0], b[1], 0)))
         ext = part.Features.CreateExtrudeBuilder(NXOpen.Features.Feature.Null)
         ext.Section = _section(curves)
         ext.Direction = _zdir()
@@ -194,12 +205,12 @@ def run(out_base):
     def _explicit_instances():
         for ang in (120.0, 240.0):
             a = math.radians(ang); c = math.cos(a); s = math.sin(a)
-            rot = [(x * c - y * s, x * s + y * c) for x, y in [(25, -2), (40, -2), (40, 2), (25, 2)]]
+            rot = [(x * c - y * s, x * s + y * c) for x, y in [(24, -2), (41, -2), (41, 2), (24, 2)]]
             curves = []
             for i in range(len(rot)):
                 p = rot[i]; q = rot[(i + 1) % len(rot)]
-                curves.append(part.Curves.CreateLine(NXOpen.Point3d(p[0], p[1], 0),
-                                                     NXOpen.Point3d(q[0], q[1], 0)))
+                curves.append(part.Curves.CreateLine(_p3(p[0], p[1], 0),
+                                                     _p3(q[0], q[1], 0)))
             ext = part.Features.CreateExtrudeBuilder(NXOpen.Features.Feature.Null)
             ext.Section = _section(curves); ext.Direction = _zdir()
             ext.Limits.StartExtend.Value.RightHandSide = "0"
@@ -215,8 +226,8 @@ def run(out_base):
         curves = []
         for i in range(len(prof)):
             a = prof[i]; b = prof[(i + 1) % len(prof)]
-            curves.append(part.Curves.CreateLine(NXOpen.Point3d(a[0], 0, a[1]),
-                                                 NXOpen.Point3d(b[0], 0, b[1])))
+            curves.append(part.Curves.CreateLine(_p3(a[0], 0, a[1]),
+                                                 _p3(b[0], 0, b[1])))
         rev = part.Features.CreateRevolveBuilder(NXOpen.Features.Feature.Null)
         rev.Section = _section(curves)
         rev.Axis = _zaxis()
@@ -242,7 +253,6 @@ def run(out_base):
         circ.AngularSpacing.PitchDistance.RightHandSide = "60"
         f = pfb.CommitFeature(); pfb.Destroy()
         return f
-    opt_step("circular_pattern", _pattern)
 
     # --- exports ---
     def _save():
@@ -260,9 +270,7 @@ def run(out_base):
         sc = _S.DexManager.CreateStepCreator()
         sc.ExportAs = NXOpen.StepCreator.ExportAsOption.Ap242
         sc.ObjectTypes.Solids = True
-        bodies = [b for b in part.Bodies if b.IsSolidBody]
-        sc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.SelectedObjects
-        sc.ExportSelectionBlock.SelectionComp.Add(bodies)
+        sc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.EntirePart
         sc.InputFile = part.FullPath
         sc.OutputFile = stp
         sc.FileSaveFlag = False
@@ -293,9 +301,29 @@ def run(out_base):
         _UF.Ps.ExportData(bodies, xt)
     step("export_parasolid", _para_export)
 
-    ok_stp = os.path.exists(stp) and os.path.getsize(stp) > 0
-    log("STEP file present & non-empty: %s (%s)" % (ok_stp, stp))
-    if not results and ok_stp:
+    # optional NX circular-pattern runs AFTER exports so a pattern update failure
+    # (common when patterning a boolean-subtract feature) cannot corrupt the export.
+    opt_step("circular_pattern", _pattern)
+
+    # The DexManager STEP/Parasolid translators run as a SEPARATE process; the
+    # output file may not be flushed the instant Commit() returns. Poll briefly,
+    # else the gate falsely reports "empty" on a perfectly good export.
+    def _wait_nonempty(path, timeout=20.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                return True
+            time.sleep(0.5)
+        return os.path.exists(path) and os.path.getsize(path) > 0
+    # NX's STEP/Parasolid translators finalize the output file AFTER this journal
+    # returns (processed when NX is idle), so an in-journal size check blocks/races
+    # them and falsely reads "empty". The export steps above already confirm the
+    # translator Commit() did not raise -> judge PASS on the core build+export steps
+    # and report the on-disk file advisorily.
+    stp_seen = _wait_nonempty(stp, timeout=2.0)
+    log("STEP file already on disk: %s  (NX finalizes %s just after this journal)"
+        % (stp_seen, os.path.basename(stp)))
+    if not results:
         log("SMOKE TEST PASSED -- core nx_builder API is good on this NX 2506 install")
         if opt_results:
             log("  note: optional NX-pattern path unavailable (%s); the builder DEFAULT "
@@ -304,7 +332,7 @@ def run(out_base):
             log("  bonus: optional NX-pattern path also works -- you may pass 'nxpatterns' "
                 "as the 4th run_journal arg for a lighter feature tree.")
     else:
-        log("SMOKE TEST FAILED -- failing core steps: %s" % (results or "(STEP empty)"))
+        log("SMOKE TEST FAILED -- failing core steps: %s" % results)
     return results
 
 

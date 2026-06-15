@@ -23,6 +23,9 @@ build/
 /blueprint.json
 /preview.svg
 
+# throwaway NX journals (leading underscore = temporary, run via Play Journal)
+/_*.py
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

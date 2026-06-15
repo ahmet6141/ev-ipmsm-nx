@@ -46,7 +46,9 @@ class WindingParams:
     parallel_paths: int = 2
     bar_clearance: float = 0.45         # gap (slot wall <-> bar): insulation + tolerance
     bar_corner_radius: float = 0.8      # rounded corner of a rectangular hairpin bar
-    model_endwindings: bool = False     # straight slot bars only when False (robust default)
+    model_endwindings: bool = True      # add a simplified end-winding ENVELOPE ring at each stack end
+    end_winding_height: float = 22.0    # axial extension of the end-winding envelope beyond each end (mm)
+    end_winding_style: str = "envelope"  # "envelope" (toroidal ring) | "hairpin" (per-slot crown arcs, experimental)
 
 
 @dataclass
@@ -61,6 +63,7 @@ class RotorParams:
     outer_bridge: float = 1.0            # steel bridge between magnet pocket and rotor surface
     end_barrier: float = 1.5             # flux-barrier air length added at each magnet end
     pocket_clearance: float = 0.15       # pocket-vs-magnet clearance (glue/tolerance)
+    magnet_pocket_fillet: float = 0.5    # corner radius on the pocket / flux-barrier (rotor stress relief)
     vertex_gap: float = 38.0             # radial gap from shaft surface to the V apex (inner ends)
     lightening_holes: int = 0            # optional circular lightening/cooling holes (0 = none)
     lightening_hole_diameter: float = 10.0
@@ -82,10 +85,26 @@ class CoolingParams:
     housing_gap: float = 0.5            # shrink-fit gap stator OD <-> jacket bore
     channel_type: str = "axial"         # "axial" | "spiral" | "none"
     channel_count: int = 12             # number of axial channels (channel_type == "axial")
-    channel_diameter: float = 6.0
+    channel_diameter: float = 4.0       # MUST stay below jacket_thickness with wall margin: a Ø=jacket channel is tangent to both jacket faces (zero-wall, NX subtract fails). Ø4 in a 6 mm jacket -> 1 mm walls.
     spiral_pitch: float = 18.0          # axial advance per turn (channel_type == "spiral")
     spiral_channel_width: float = 6.0
     spiral_channel_depth: float = 5.0
+
+
+@dataclass
+class MaterialParams:
+    """Production material specification. Metadata only -- does not change the
+    generated geometry, but is the data a manufacturing BOM / FEA needs."""
+    magnet_grade: str = "N42SH"               # sintered NdFeB; 'SH' = 150 C max service
+    magnet_br_t: float = 1.28                 # remanence Br @ 20 C
+    magnet_hcj_ka_m: float = 1592.0           # intrinsic coercivity Hcj (>= 20 kOe)
+    magnet_max_service_c: float = 150.0       # max continuous magnet temperature
+    magnet_segments_axial: int = 4            # axial magnet segments (eddy-loss control); 1 = solid block
+    magnet_seg_gap_mm: float = 0.2            # insulation/adhesive gap between axial magnet segments
+    electrical_steel: str = "0.27 mm NO silicon steel (M250-27 class)"
+    stacking_factor: float = 0.96             # iron fill of the lamination stack
+    copper_insulation_class: str = "H (180 C) hairpin enamel"
+    housing_material: str = "cast aluminium (water jacket)"
 
 
 # --------------------------------------------------------------------------- #
@@ -100,6 +119,7 @@ class MotorParams:
     rotor: RotorParams = field(default_factory=RotorParams)
     shaft: ShaftParams = field(default_factory=ShaftParams)
     cooling: CoolingParams = field(default_factory=CoolingParams)
+    material: MaterialParams = field(default_factory=MaterialParams)
 
     # -- serialisation ----------------------------------------------------- #
     def to_dict(self) -> Dict[str, Any]:
@@ -178,6 +198,7 @@ _GROUP_TYPES = {
     "rotor": RotorParams,
     "shaft": ShaftParams,
     "cooling": CoolingParams,
+    "material": MaterialParams,
 }
 
 

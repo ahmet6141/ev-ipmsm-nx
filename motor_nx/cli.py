@@ -39,11 +39,17 @@ def main(argv=None):
     p_prev.add_argument("config", nargs="?")
     p_prev.add_argument("-o", "--out", default="preview.svg")
 
+    p_fea = sub.add_parser("fea", help="write the FEA hand-off package (spec JSON + DXF + winding map)")
+    p_fea.add_argument("config", nargs="?")
+    p_fea.add_argument("-o", "--out", default="fea")
+
     args = parser.parse_args(argv)
     params = _load_params(args.config)
 
     if args.cmd == "report":
         print(em_design.report(params))
+        print()
+        print(em_design.performance_report(params))
         return 0
 
     if args.cmd == "validate":
@@ -71,6 +77,14 @@ def main(argv=None):
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(preview.to_svg(blueprint))
         print("wrote %s" % args.out)
+        return 0
+
+    if args.cmd == "fea":
+        from . import fea
+        written = fea.write_package(params, args.out)
+        print("wrote FEA hand-off package:")
+        for path in written:
+            print("  ", path)
         return 0
 
     return 0

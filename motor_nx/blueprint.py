@@ -70,6 +70,10 @@ class BuildStep:
     # circular pattern about Z
     pattern_count: int = 1
     pattern_angle_deg: float = 0.0
+    # partial / positioned revolve (kind="revolve"): sweep `angle_deg`, profile
+    # placed in the half-plane at `start_angle_deg` about Z (default = full 360 at +X)
+    angle_deg: float = 360.0
+    start_angle_deg: float = 0.0
 
     def as_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -114,6 +118,60 @@ def _circle(center: Point, radius: float, segments: int = _CIRCLE_SEG) -> List[P
     ]
 
 
+def _round_corner(p0: Point, p1: Point, p2: Point, radius: float, segs: int = 5) -> List[Point]:
+    """Polyline-arc fillet of `radius` replacing corner p1, tangent to edges
+    p0-p1 and p1-p2. ROBUST: returns [p1] (left sharp) whenever the corner is
+    degenerate or the radius will not fit, so a rounded section can never
+    self-intersect -- the worst case is simply "no fillet here"."""
+    ax, ay = p0[0] - p1[0], p0[1] - p1[1]
+    bx, by = p2[0] - p1[0], p2[1] - p1[1]
+    la, lb = math.hypot(ax, ay), math.hypot(bx, by)
+    if la < 1e-9 or lb < 1e-9 or radius <= 0:
+        return [p1]
+    ax, ay, bx, by = ax / la, ay / la, bx / lb, by / lb
+    dot = max(-1.0, min(1.0, ax * bx + ay * by))
+    theta = math.acos(dot)                       # interior angle at p1
+    if theta < 1e-4 or abs(theta - math.pi) < 1e-4:
+        return [p1]                              # straight or doubled back
+    t = radius / math.tan(theta / 2.0)
+    t = min(t, 0.49 * la, 0.49 * lb)             # keep tangent points on the edges
+    r = t * math.tan(theta / 2.0)
+    if r < 1e-6:
+        return [p1]
+    t1 = (p1[0] + t * ax, p1[1] + t * ay)
+    bisx, bisy = ax + bx, ay + by
+    bl = math.hypot(bisx, bisy)
+    if bl < 1e-9:
+        return [p1]
+    d = r / math.sin(theta / 2.0)
+    cx, cy = p1[0] + d * bisx / bl, p1[1] + d * bisy / bl
+    a1 = math.atan2(t1[1] - cy, t1[0] - cx)
+    a2 = math.atan2((p1[1] + t * by) - cy, (p1[0] + t * bx) - cx)
+    da = a2 - a1
+    while da > math.pi:
+        da -= 2 * math.pi
+    while da < -math.pi:
+        da += 2 * math.pi
+    return [(cx + r * math.cos(a1 + da * i / segs),
+             cy + r * math.sin(a1 + da * i / segs)) for i in range(segs + 1)]
+
+
+def _round_polygon(poly: List[Point], radius: float, corners=None, segs: int = 5) -> List[Point]:
+    """Round corners of a closed polygon. `corners`: iterable of vertex indices
+    to round, or None for all corners. Non-fitting corners are left sharp."""
+    n = len(poly)
+    if n < 3 or radius <= 0:
+        return list(poly)
+    sel = set(range(n)) if corners is None else set(corners)
+    out: List[Point] = []
+    for i in range(n):
+        if i in sel:
+            out.extend(_round_corner(poly[(i - 1) % n], poly[i], poly[(i + 1) % n], radius, segs))
+        else:
+            out.append(poly[i])
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # reference profiles (used by both the blueprint and em_design validation)
 # --------------------------------------------------------------------------- #
@@ -129,16 +187,18 @@ def stator_slot_polygon(p: MotorParams, g: em_design.DerivedGeometry) -> List[Po
     ow = s.slot_opening_width / 2.0
     sw = g.slot_width / 2.0
     margin = 0.5  # mouth pokes into the bore for a guaranteed through-cut
-    return [
+    poly = [
         (r_bore - margin, -ow),
         (r1, -ow),
         (r1, -sw),
-        (r2, -sw),
-        (r2, sw),
+        (r2, -sw),   # slot-bottom corner
+        (r2, sw),    # slot-bottom corner
         (r1, sw),
         (r1, ow),
         (r_bore - margin, ow),
     ]
+    # round the two slot-bottom corners (stress relief at the back of the slot)
+    return _round_polygon(poly, s.slot_bottom_fillet, corners={3, 4})
 
 
 def v_tilt_deg(v_angle_deg: float) -> float:
@@ -180,6 +240,7 @@ def magnet_pocket_polygons(p: MotorParams, g: em_design.DerivedGeometry) -> List
     half_len = r.magnet_width / 2.0 + r.end_barrier
     half_thk = r.magnet_thickness / 2.0 + r.pocket_clearance
     plus = _rect(center, u, v, half_len, half_thk)
+    plus = _round_polygon(plus, r.magnet_pocket_fillet)   # round all 4 pocket / flux-barrier corners
     minus = _mirror_y(plus)
     return [plus, minus]
 
@@ -208,7 +269,8 @@ def conductor_polygons(p: MotorParams, g: em_design.DerivedGeometry) -> List[Lis
     for k in range(n):
         r_lo = g.slot_body_inner_radius + clr + k * (bar_h + clr)
         r_hi = r_lo + bar_h
-        bars.append([(r_lo, -bw / 2), (r_hi, -bw / 2), (r_hi, bw / 2), (r_lo, bw / 2)])
+        bar = [(r_lo, -bw / 2), (r_hi, -bw / 2), (r_hi, bw / 2), (r_lo, bw / 2)]
+        bars.append(_round_polygon(bar, w.bar_corner_radius))  # rounded hairpin-bar corners
     return bars
 
 
@@ -281,14 +343,26 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
             cx=r.lightening_hole_pitch_radius, cy=0.0, z0=0.0, length=p.stack_length,
             pattern_count=r.lightening_holes, pattern_angle_deg=360.0 / r.lightening_holes,
         ))
-    # 5) magnets as separate bodies (NdFeB)
+    # 5) magnets as separate bodies (NdFeB), split into axial segments to cut
+    #    rotor-magnet eddy-current loss (each segment insulated by a thin gap).
+    #    n_seg == 1 reproduces the original single full-length block exactly.
+    #    NOTE: segmented magnets are DISCRETE fixed-length pieces -- unlike the
+    #    laminated stack they are not driven by the NX 'stack_length' expression,
+    #    so editing stack_length in NX rescales the steel/winding but not the
+    #    magnet segments; regenerate from params for a different stack length.
+    n_seg = max(1, int(p.material.magnet_segments_axial))
+    seg_gap = p.material.magnet_seg_gap_mm if n_seg > 1 else 0.0
+    seg_len = (p.stack_length - seg_gap * (n_seg - 1)) / n_seg
     for idx, poly in enumerate(magnet_polygons(p, g)):
-        steps.append(BuildStep(
-            id=f"magnet_{idx}", role="magnet", kind="extrude", boolean="create",
-            body_name=f"Magnet_{idx}", material="NdFeB", color=COL_MAGNET,
-            profile=poly, z0=0.0, length=p.stack_length,
-            pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
-        ))
+        for j in range(n_seg):
+            seg = "" if n_seg == 1 else "_seg%d" % j
+            steps.append(BuildStep(
+                id="magnet_%d%s" % (idx, seg), role="magnet", kind="extrude",
+                boolean="create", body_name="Magnet_%d%s" % (idx, seg),
+                material="NdFeB", color=COL_MAGNET,
+                profile=poly, z0=j * (seg_len + seg_gap), length=seg_len,
+                pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
+            ))
 
     # 6) hairpin conductor bars (one stack per slot, patterned Q times)
     for k, poly in enumerate(conductor_polygons(p, g)):
@@ -298,6 +372,69 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
             profile=poly, z0=0.0, length=p.stack_length,
             pattern_count=s.slot_count, pattern_angle_deg=360.0 / s.slot_count,
         ))
+
+    # 6b) end-winding. "envelope" = a toroidal ring per stack end (default, robust).
+    #     "hairpin" = an individual crown ARC per slot per end -- a positioned
+    #     partial revolve spanning the coil pitch, much closer to real bent hairpin
+    #     end-turns (experimental; the arcs nest/overlap as in a real crown bundle).
+    if w.model_endwindings and w.end_winding_height > 0:
+        if getattr(w, "end_winding_style", "envelope") == "hairpin":
+            # Flat-top U hairpin end-turn PER SLOT: an axial riser rises out of the
+            # slot to the crown height, a circumferential crown arc spans the coil
+            # pitch, and the next slot's riser brings it back down. Much closer to a
+            # real bent hairpin than a flat ring. (Per-slot bundle, not per-conductor:
+            # a full per-conductor solid winding -- 864 bent bars -- is impractical
+            # as solids here and is industry-done with winding tools + FEA.)
+            r_mid = 0.5 * (g.slot_body_inner_radius + g.slot_body_outer_radius)
+            half_r = 0.40 * (g.slot_body_outer_radius - g.slot_body_inner_radius)
+            bw = max(1.5, g.slot_width - 2 * w.bar_clearance)
+            apex = w.end_winding_height
+            pitch_ang = (s.slot_count // r.pole_count) * (360.0 / s.slot_count)  # coil span
+            slot_ang = 360.0 / s.slot_count
+            n_step = 7                      # facets across a crown roof (rise -> peak -> fall)
+            shoulder = apex * 0.55          # riser height (the crown peaks above this)
+            rise = apex * 0.45              # crown apex above the shoulder
+            step_z = rise * 2.0 / (n_step - 1)
+            crown_hz = 0.8 * step_z         # crown axial half-height -> facets overlap (no gaps)
+            sub = pitch_ang / n_step
+            riser_ref = [
+                (r_mid - half_r, -bw / 2.0), (r_mid + half_r, -bw / 2.0),
+                (r_mid + half_r, bw / 2.0), (r_mid - half_r, bw / 2.0),
+            ]
+            for end in ("front", "rear"):
+                z0_riser = p.stack_length if end == "rear" else -shoulder
+                for i in range(s.slot_count):
+                    ang = i * slot_ang
+                    steps.append(BuildStep(
+                        id="hp_riser_%s_%d" % (end, i), role="end_winding", kind="extrude",
+                        boolean="create", body_name="HP_Riser_%s_%d" % (end, i),
+                        material="copper", color=COL_COPPER,
+                        profile=_rotate(riser_ref, ang), z0=z0_riser, length=shoulder,
+                    ))
+                    for k in range(n_step):
+                        tri = 1.0 - abs(2.0 * k / (n_step - 1) - 1.0)   # 0 -> 1 -> 0 roof
+                        h = shoulder + rise * tri
+                        zc = (p.stack_length + h) if end == "rear" else -h
+                        crown_rz = [
+                            (r_mid - half_r, zc - crown_hz), (r_mid + half_r, zc - crown_hz),
+                            (r_mid + half_r, zc + crown_hz), (r_mid - half_r, zc + crown_hz),
+                        ]
+                        steps.append(BuildStep(
+                            id="hp_crown_%s_%d_%d" % (end, i, k), role="end_winding", kind="revolve",
+                            boolean="create", body_name="HP_Crown_%s_%d_%d" % (end, i, k),
+                            material="copper", color=COL_COPPER,
+                            profile=crown_rz, start_angle_deg=ang + k * sub, angle_deg=sub,
+                        ))
+        else:
+            for z0, end in ((-w.end_winding_height, "front"), (p.stack_length, "rear")):
+                steps.append(BuildStep(
+                    id="endwinding_%s" % end, role="end_winding", kind="tube",
+                    boolean="create", body_name="EndWinding_%s" % end,
+                    material="copper", color=COL_COPPER,
+                    outer_radius=g.slot_body_outer_radius,
+                    inner_radius=g.slot_body_inner_radius,
+                    z0=z0, length=w.end_winding_height,
+                ))
 
     # 7) shaft (stepped, revolved)
     steps.append(BuildStep(

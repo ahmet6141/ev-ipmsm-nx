@@ -41,6 +41,16 @@ _SESSION = NXOpen.Session.GetSession()
 _TOL = 0.001  # modeling distance tolerance (mm)
 
 
+def _p3(x, y, z):
+    """NX 2506 NXOpen requires float (double) coords; passing an int raises
+    'Expecting double type, found int'. Coerce every point coordinate here."""
+    return NXOpen.Point3d(float(x), float(y), float(z))
+
+
+def _v3(x, y, z):
+    return NXOpen.Vector3d(float(x), float(y), float(z))
+
+
 # --------------------------------------------------------------------------- #
 # session / part bootstrap  (hardened: capture part from Commit, mm units)
 # --------------------------------------------------------------------------- #
@@ -171,48 +181,51 @@ class MotorBuilder:
 
     # -- low level geometry ------------------------------------------------ #
     def _z_direction(self):
-        origin = NXOpen.Point3d(0.0, 0.0, 0.0)
-        vec = NXOpen.Vector3d(0.0, 0.0, 1.0)
+        origin = _p3(0.0, 0.0, 0.0)
+        vec = _v3(0.0, 0.0, 1.0)
         return self.part.Directions.CreateDirection(
             origin, vec, NXOpen.SmartObject.UpdateOption.WithinModeling)
 
     def _z_axis_obj(self):
         if self._z_axis is None:
             uo = NXOpen.SmartObject.UpdateOption.WithinModeling
-            p = NXOpen.Point3d(0.0, 0.0, 0.0)
-            d = self.part.Directions.CreateDirection(p, NXOpen.Vector3d(0.0, 0.0, 1.0), uo)
+            p = _p3(0.0, 0.0, 0.0)
+            d = self.part.Directions.CreateDirection(p, _v3(0.0, 0.0, 1.0), uo)
             pt = self.part.Points.CreatePoint(p)
             self._z_axis = self.part.Axes.CreateAxis(pt, d, uo)
         return self._z_axis
 
-    def _lines_from_polygon(self, points, plane_z=0.0, in_xz=False):
-        """Dumb-curve closed loop. in_xz: place points as (x, 0, z) for a revolve
-        profile; otherwise (x, y, plane_z) for an extrude profile on a Z plane."""
+    def _lines_from_polygon(self, points, plane_z=0.0, in_xz=False, start_angle_deg=0.0):
+        """Dumb-curve closed loop. in_xz: place points as (r, 0, z) -- or, when
+        start_angle_deg != 0, in the half-plane at that angle (r cos a, r sin a, z)
+        -- for a revolve profile; otherwise (x, y, plane_z) for an extrude on a Z plane."""
+        ca = math.cos(math.radians(start_angle_deg))
+        sa = math.sin(math.radians(start_angle_deg))
         curves = []
         n = len(points)
         for i in range(n):
             a = points[i]
             b = points[(i + 1) % n]
             if in_xz:
-                p0 = NXOpen.Point3d(a[0], 0.0, a[1])
-                p1 = NXOpen.Point3d(b[0], 0.0, b[1])
+                p0 = _p3(a[0] * ca, a[0] * sa, a[1])
+                p1 = _p3(b[0] * ca, b[0] * sa, b[1])
             else:
-                p0 = NXOpen.Point3d(a[0], a[1], plane_z)
-                p1 = NXOpen.Point3d(b[0], b[1], plane_z)
+                p0 = _p3(a[0], a[1], plane_z)
+                p1 = _p3(b[0], b[1], plane_z)
             curves.append(self.part.Curves.CreateLine(p0, p1))
         return curves
 
     def _circle_curve(self, cx, cy, radius, plane_z=0.0):
-        c = NXOpen.Point3d(cx, cy, plane_z)
-        xdir = NXOpen.Vector3d(1.0, 0.0, 0.0)
-        ydir = NXOpen.Vector3d(0.0, 1.0, 0.0)
-        return self.part.Curves.CreateArc(c, xdir, ydir, radius, 0.0, 2.0 * math.pi)
+        c = _p3(cx, cy, plane_z)
+        xdir = _v3(1.0, 0.0, 0.0)
+        ydir = _v3(0.0, 1.0, 0.0)
+        return self.part.Curves.CreateArc(c, xdir, ydir, float(radius), 0.0, 2.0 * math.pi)
 
     def _section(self, curves):
         section = self.part.Sections.CreateSection(0.0095, _TOL, 0.5)
         section.AllowSelfIntersection(False)
         rule = self.part.ScRuleFactory.CreateRuleCurveDumb(curves)  # not the deprecated *BaseCurveDumb
-        help_pt = NXOpen.Point3d(0.0, 0.0, 0.0)
+        help_pt = _p3(0.0, 0.0, 0.0)
         null_obj = NXOpen.NXObject.Null
         section.AddToSection([rule], curves[0], null_obj, null_obj, help_pt,
                              NXOpen.Section.Mode.Create, False)
@@ -239,12 +252,12 @@ class MotorBuilder:
         ext.Destroy()
         return feat
 
-    def _revolve(self, curves, op, target_body):
+    def _revolve(self, curves, op, target_body, angle_deg=360.0):
         rev = self.part.Features.CreateRevolveBuilder(NXOpen.Features.Feature.Null)
         rev.Section = self._section(curves)
         rev.Axis = self._z_axis_obj()
         rev.Limits.StartExtend.Value.RightHandSide = "0"
-        rev.Limits.EndExtend.Value.RightHandSide = "360"
+        rev.Limits.EndExtend.Value.RightHandSide = repr(float(angle_deg))
         rev.BooleanOperation.Type = self._bool_type(op)
         if target_body is not None and op in ("subtract", "unite"):
             rev.BooleanOperation.SetTargetBodies([target_body])
@@ -351,8 +364,11 @@ class MotorBuilder:
                         self.bodies[step["id"]] = self._feature_body(feat)
 
         elif kind == "revolve":
-            curves = self._lines_from_polygon(step["profile"], in_xz=True)
-            feat = self._revolve(curves, op, target)
+            curves = self._lines_from_polygon(
+                step["profile"], in_xz=True,
+                start_angle_deg=float(step.get("start_angle_deg", 0.0)))
+            feat = self._revolve(curves, op, target,
+                                 angle_deg=float(step.get("angle_deg", 360.0)))
             if op == "create":
                 self.bodies[step["id"]] = self._feature_body(feat)
 
@@ -444,16 +460,24 @@ def export_parasolid(part, out_path):
 # --------------------------------------------------------------------------- #
 # entry point  (run_journal -args  <blueprint.json>  <out.prt>  [export])
 # --------------------------------------------------------------------------- #
-def _default_blueprint():
+def _default_blueprint(end_winding_style=None):
     """Generate the default EV IPMSM blueprint in-process (no NXOpen needed for
     the blueprint layer), so `run_journal nx_builder.py` works with no JSON."""
     here = os.path.dirname(os.path.abspath(__file__))
     parent = os.path.dirname(here)
     if parent not in sys.path:
         sys.path.insert(0, parent)
+    # NX keeps ONE Python interpreter per session, so a prior Play-Journal run
+    # caches the motor_nx submodules; drop them so edits to params/em_design/
+    # blueprint are picked up on the next run without restarting NX.
+    for _m in [m for m in list(sys.modules) if m == "motor_nx" or m.startswith("motor_nx.")]:
+        del sys.modules[_m]
     from motor_nx import blueprint as _bp
     from motor_nx.params import MotorParams
-    return _bp.generate(MotorParams())
+    p = MotorParams()
+    if end_winding_style:
+        p.winding.end_winding_style = end_winding_style
+    return _bp.generate(p)
 
 
 def main():
@@ -477,14 +501,34 @@ def main():
             out_prt = a
         else:
             out_prt = a + ".prt"
+    hairpin = any("hairpin" in a.lower() for a in sys.argv[1:])
+    default_design = blueprint is None
     if blueprint is None:
-        blueprint = _default_blueprint()
+        blueprint = _default_blueprint("hairpin" if hairpin else None)
     if out_prt is None:
         out_prt = os.path.join(os.path.dirname(os.path.abspath(__file__)), "motor_out.prt")
 
     part = new_mm_part(out_prt, make_displayed=True)
     builder = MotorBuilder(part, blueprint.get("stack_length", 134.0), use_nx_patterns=use_nx_patterns)
     builder.log("=== motor_nx build: %s ===" % blueprint.get("name", "motor"))
+    if default_design:
+        try:
+            from motor_nx import em_design as _emd
+            from motor_nx.params import MotorParams as _MP
+            builder.log(_emd.report(_MP()))
+            builder.log("")
+            builder.log(_emd.performance_report(_MP()))
+            builder.log("")
+        except Exception as _rexc:
+            builder.log("design report skipped: %s" % _rexc)
+        try:
+            from motor_nx import fea as _fea
+            from motor_nx.params import MotorParams as _MP2
+            _feadir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fea")
+            _w = _fea.write_package(_MP2(), _feadir)
+            builder.log("FEA hand-off package: %d files -> %s" % (len(_w), _feadir))
+        except Exception as _fexc:
+            builder.log("FEA package skipped: %s" % _fexc)
     for issue in blueprint.get("validation", []):
         builder.log("VALIDATION: %s" % issue)
 
