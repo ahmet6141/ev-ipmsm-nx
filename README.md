@@ -134,5 +134,7 @@ Belgeler:
 - [docs/NX_AUTOMATION.md](docs/NX_AUTOMATION.md) — NXOpen otomasyon (NX 2506) referansı
 - [docs/MANUFACTURING.md](docs/MANUFACTURING.md) — BOM + GD&T toleranslar + imalat süreci
 - [docs/FEA_PREP.md](docs/FEA_PREP.md) — FEA doğrulama planı + kabul kriterleri
-- [docs/AUDIT.md](docs/AUDIT.md) — derin denetim bulguları + çözüm durumu (47 bulgu)
+- [docs/FEA_HOWTO.md](docs/FEA_HOWTO.md) — gerçek FEA nasıl/hangi programla (FEMM/Maxwell/Motor-CAD)
+- [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) — **uçtan uca yürütme planı** (FEA → iterasyon → imalat, 12 faz)
+- [docs/AUDIT.md](docs/AUDIT.md) — derin denetim bulguları + çözüm durumu (62 bulgu, 2 tur)
 - [PROJECT_MEMORY/](PROJECT_MEMORY/) — proje ilerleme günlüğü
