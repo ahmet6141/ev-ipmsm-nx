@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, Tuple
 
 from .params import MotorParams
 
@@ -386,7 +386,12 @@ class EMAssumptions:
     j_peak_a_mm2: float = 26.0       # short-term peak rms current density
     slot_fill: float = 0.60          # NET copper fill of the slot body (matches the modeled
     #                                  8-bar geometry ~0.595; hairpin gross ~0.7, net ~0.6)
-    b_g1_peak_t: float = 0.85        # fundamental airgap flux density from the PMs (peak)
+    # Fundamental airgap flux density (peak, T). None => DERIVE it from the magnet
+    # remanence Br via the first-order PM magnetic circuit (see airgap_flux_density);
+    # set a number to OVERRIDE with a measured / FEA value.
+    b_g1_peak_t: Optional[float] = None
+    pm_flux_leakage: float = 1.05    # k_leak > 1: PM flux short-circuited by rotor bridges / end leakage
+    pole_arc_ratio: float = 0.85     # effective electrical pole-arc -> fundamental of the airgap wave
     saliency_factor: float = 1.25    # IPM reluctance-torque bonus over PM-only (1.2-1.4)
     dc_bus_v: float = 400.0          # inverter DC-link voltage (400 V class; 800 V via turns)
     modulation_index: float = 1.0    # 1.0 = pure SVPWM linear ceiling; up to ~1.15 toward six-step
@@ -414,6 +419,62 @@ class PerformanceEstimate:
     power_peak_kw: float
     copper_loss_cont_w: float
     efficiency_cont_pct: float
+    # --- refinement outputs (defaults keep older positional construction valid) ---
+    airgap_flux_density_t: float = 0.0   # fundamental peak Bg1 actually used (derived or override)
+    carter_factor: float = 1.0           # stator-slotting Carter coefficient (>= 1)
+    effective_stack_mm: float = 0.0      # k_stack * stack_length used for flux & torque
+
+
+def carter_factor(p: MotorParams) -> float:
+    """Carter coefficient k_c (>= 1) for the stator slot openings: the slotting makes
+    the airgap behave as if it were k_c * air_gap wide. Standard closed form from the
+    slot-opening / airgap ratio (Carter's gamma)."""
+    s, r = p.stator, p.rotor
+    g = derive(p)
+    slot_pitch = TAU * g.bore_radius / s.slot_count          # mm, at the bore
+    b0, gap = s.slot_opening_width, r.air_gap
+    if gap <= 0.0 or slot_pitch <= 0.0:
+        return 1.0
+    u = b0 / gap
+    gamma = (4.0 / math.pi) * ((u / 2.0) * math.atan(u / 2.0)
+                               - math.log(math.sqrt(1.0 + (u / 2.0) ** 2)))
+    denom = slot_pitch - gamma * gap
+    return slot_pitch / denom if denom > 0.0 else 1.0
+
+
+def airgap_flux_density(p: MotorParams, a: "EMAssumptions" = None) -> Tuple[float, float]:
+    """Derive the airgap flux density from the magnet remanence Br -- a first-order
+    PM magnetic-circuit estimate, NOT FEA.
+
+    Returns ``(Bg_flat_peak_T, Bg1_fundamental_peak_T)``.
+
+    Model: the two V-arms of a pole feed the pole face in parallel, so the magnet
+    area facing the magnetisation direction is ``A_m = 2 * magnet_width`` (per unit
+    stack) against an airgap pole area ``A_g = rotor pole-pitch arc``. Ignoring iron
+    reluctance, flux continuity + the linear recoil line ``B = Br + mu0*mu_rec*H``
+    give the operating (flat-top) airgap density
+
+        Bg_flat = Br*(A_m/A_g) / (k_leak + mu_rec*(g_eff/l_m)*(A_m/A_g))
+
+    with ``g_eff = k_c * air_gap`` (Carter) and ``l_m = magnet_thickness``. The
+    fundamental peak follows from the pole-arc ratio of the ~rectangular wave:
+    ``Bg1 = (4/pi)*Bg_flat*sin(pole_arc_ratio*pi/2)``.
+
+    The two calibration inputs (``pm_flux_leakage``, ``pole_arc_ratio``) default so
+    the reference design reproduces the ~0.85 T previously assumed by hand, while now
+    scaling physically with Br, magnet width/thickness, airgap and pole count."""
+    a = a or EMAssumptions()
+    g = derive(p)
+    r, m = p.rotor, p.material
+    pole_pitch_arc = TAU * g.rotor_outer_radius / r.pole_count
+    if pole_pitch_arc <= 0.0 or r.magnet_thickness <= 0.0:
+        return 0.0, 0.0
+    a_ratio = (2.0 * r.magnet_width) / pole_pitch_arc        # A_m / A_g (stack cancels)
+    g_eff = carter_factor(p) * r.air_gap
+    denom = a.pm_flux_leakage + m.magnet_mu_recoil * (g_eff / r.magnet_thickness) * a_ratio
+    bg_flat = m.magnet_br_t * a_ratio / denom if denom > 0.0 else 0.0
+    bg1 = (4.0 / math.pi) * bg_flat * math.sin(a.pole_arc_ratio * math.pi / 2.0)
+    return bg_flat, bg1
 
 
 def estimate_performance(p: MotorParams, a: "EMAssumptions" = None) -> PerformanceEstimate:
@@ -446,16 +507,23 @@ def estimate_performance(p: MotorParams, a: "EMAssumptions" = None) -> Performan
     A_cont = s.slot_count * w.conductors_per_slot * i_cond_cont / bore_circ   # A/m
     A_peak = s.slot_count * w.conductors_per_slot * i_cond_peak / bore_circ
 
-    bg1_rms = a.b_g1_peak_t / math.sqrt(2.0)
+    # Airgap flux density: derive from Br via the PM magnetic circuit unless the
+    # caller pins an explicit (measured / FEA) value.
+    k_c = carter_factor(p)
+    bg1_peak = a.b_g1_peak_t if a.b_g1_peak_t is not None else airgap_flux_density(p, a)[1]
+    bg1_rms = bg1_peak / math.sqrt(2.0)
     sigma_cont = A_cont * bg1_rms * g.winding_factor        # Pa
     sigma_peak = A_peak * bg1_rms * g.winding_factor
 
-    k_rv = (math.pi / 2.0) * D * D * L                      # T = k_rv * sigma
+    # Effective magnetic stack: the laminations are only k_stack of solid iron, so
+    # the flux that makes both torque and back-EMF crosses k_stack * L of active iron.
+    L_eff = L * p.material.stacking_factor
+    k_rv = (math.pi / 2.0) * D * D * L_eff                  # T = k_rv * sigma
     torque_cont = k_rv * sigma_cont * a.saliency_factor
     torque_peak = k_rv * sigma_peak * a.saliency_factor
 
-    pole_area = math.pi * D * L / r.pole_count
-    flux_pole = (2.0 / math.pi) * a.b_g1_peak_t * pole_area
+    pole_area = math.pi * D * L_eff / r.pole_count
+    flux_pole = (2.0 / math.pi) * bg1_peak * pole_area
     psi_pm = series_turns * g.winding_factor * flux_pole
     omega_e_1k = (r.pole_count / 2.0) * (2.0 * math.pi * 1000.0 / 60.0)
     e_ph_rms_1k = psi_pm * omega_e_1k / math.sqrt(2.0)
@@ -495,6 +563,9 @@ def estimate_performance(p: MotorParams, a: "EMAssumptions" = None) -> Performan
         power_peak_kw=power_peak / 1000.0,
         copper_loss_cont_w=p_cu,
         efficiency_cont_pct=eff_cont,
+        airgap_flux_density_t=bg1_peak,
+        carter_factor=k_c,
+        effective_stack_mm=L_eff * 1000.0,
     )
 
 
@@ -505,8 +576,10 @@ def performance_report(p: MotorParams, a: "EMAssumptions" = None) -> str:
     return "\n".join([
         f"Performance estimate (FIRST-ORDER analytical -- verify with FEA) -- {p.name}",
         f"  assumptions   : J {a.j_cont_a_mm2:.0f}/{a.j_peak_a_mm2:.0f} A/mm^2 cont/peak,"
-        f" fill {a.slot_fill:.2f}, Bg1 {a.b_g1_peak_t:.2f} T, saliency x{a.saliency_factor:.2f},"
-        f" Vdc {a.dc_bus_v:.0f} V",
+        f" fill {a.slot_fill:.2f}, saliency x{a.saliency_factor:.2f}, Vdc {a.dc_bus_v:.0f} V",
+        f"  airgap flux Bg1          : {e.airgap_flux_density_t:.3f} T "
+        f"({'OVERRIDE' if a.b_g1_peak_t is not None else 'derived from Br %.2f T' % p.material.magnet_br_t}),"
+        f" Carter k_c {e.carter_factor:.3f}, eff. stack {e.effective_stack_mm:.0f} mm",
         f"  series turns/phase       : {e.series_turns_per_phase:.0f}",
         f"  phase current cont/peak  : {e.i_phase_cont_a:.0f} / {e.i_phase_peak_a:.0f} A rms",
         f"  electric loading         : {e.electric_loading_cont_ka_m:.0f} / {e.electric_loading_peak_ka_m:.0f} kA/m",

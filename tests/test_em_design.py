@@ -69,6 +69,50 @@ def test_validate_catches_zero_jacket():
     assert any("jacket_thickness" in m for m in em_design.validate(p))
 
 
+# --- airgap flux density derived from Br (refined model) ------------------- #
+def test_airgap_flux_density_derived_in_band():
+    # default assumptions DERIVE Bg from Br; result must be physical and reproduce
+    # the ~0.85 T that was previously hand-assumed for this reference design.
+    _flat, bg1 = em_design.airgap_flux_density(MotorParams())
+    assert 0.60 < bg1 < 1.00
+    assert abs(bg1 - 0.85) < 0.08          # calibrated to the legacy reference value
+    e = em_design.estimate_performance(MotorParams())
+    assert abs(e.airgap_flux_density_t - bg1) < 1e-9
+
+
+def test_bg_scales_with_remanence():
+    weak = MotorParams(); weak.material.magnet_br_t = 1.10
+    strong = MotorParams(); strong.material.magnet_br_t = 1.40
+    assert (em_design.airgap_flux_density(strong)[1]
+            > em_design.airgap_flux_density(weak)[1])
+
+
+def test_bg_scales_with_magnet_width():
+    thin = MotorParams(); thin.rotor.magnet_width = 20.0
+    wide = MotorParams(); wide.rotor.magnet_width = 30.0
+    assert em_design.airgap_flux_density(wide)[1] > em_design.airgap_flux_density(thin)[1]
+
+
+def test_bg_override_is_respected():
+    a = em_design.EMAssumptions(b_g1_peak_t=0.90)
+    e = em_design.estimate_performance(MotorParams(), a)
+    assert abs(e.airgap_flux_density_t - 0.90) < 1e-9
+
+
+def test_carter_factor_ge_one():
+    kc = em_design.carter_factor(MotorParams())
+    assert 1.0 <= kc < 1.5                  # slot opening slightly widens the effective gap
+
+
+def test_stacking_factor_reduces_torque():
+    full = MotorParams(); full.material.stacking_factor = 1.00
+    real = MotorParams(); real.material.stacking_factor = 0.96
+    tf = em_design.estimate_performance(full).torque_peak_nm
+    tr = em_design.estimate_performance(real).torque_peak_nm
+    assert tr < tf
+    assert abs(tr / tf - 0.96) < 1e-3       # torque scales with effective stack
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

@@ -57,6 +57,10 @@ def fea_spec(p: MotorParams, a: "em_design.EMAssumptions" = None) -> Dict[str, A
             "slots": s.slot_count, "poles": r.pole_count,
             "back_iron_mm": s.back_iron_thickness, "tooth_width_mm": s.tooth_width,
             "outer_bridge_mm": r.outer_bridge, "center_post_halfwidth_mm": r.center_post_halfwidth,
+            # single-V interior-PM pocket (drives the Motor-CAD / FEMM rotor template)
+            "magnet_thickness_mm": r.magnet_thickness, "magnet_width_mm": r.magnet_width,
+            "v_angle_deg": r.v_angle_deg, "magnets_per_pole": r.magnets_per_pole,
+            "vertex_gap_mm": r.vertex_gap, "end_barrier_mm": r.end_barrier,
         },
         "symmetry_and_bc": {
             "fea_sector": "1 pole",

@@ -137,4 +137,5 @@ Belgeler:
 - [docs/FEA_HOWTO.md](docs/FEA_HOWTO.md) — gerçek FEA nasıl/hangi programla (FEMM/Maxwell/Motor-CAD)
 - [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) — **uçtan uca yürütme planı** (FEA → iterasyon → imalat, 12 faz)
 - [docs/AUDIT.md](docs/AUDIT.md) — derin denetim bulguları + çözüm durumu (62 bulgu, 2 tur)
+- [verification/README.md](verification/README.md) — **P1 Motor-CAD (PyMotorCAD) + P6 NX Drafting sürücüleri** (fea/ paketini koşar, kabul kapısına puanlar)
 - [PROJECT_MEMORY/](PROJECT_MEMORY/) — proje ilerleme günlüğü

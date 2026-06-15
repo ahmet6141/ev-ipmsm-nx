@@ -98,6 +98,40 @@ FEA paketini de loglar/üretir.
 - **C5 testler**: test_analysis/em_design/fea → toplam **43/43**.
 - **C6**: doküman uzlaştırma + `docs/AUDIT.md` + bu kayıt.
 
+## Doğrulama sürücüleri & model rafine (2026-06-15)
+PROJECT_PLAN'ın yürütme fazlarını fiilen koşturacak **çalıştırılabilir betikler** + analitik
+modelin rafine edilmesi. (Kullanıcı seçimi: FEA aracı = **Ansys Motor-CAD**; ayrıca performans
+rafine + NX Drafting + configs doğrula.)
+- **`verification/motorcad_emag.py` — P1 EM-FEA sürücüsü (PyMotorCAD, ansys-motorcad-core).**
+  `fea/fea_spec.json`'u Motor-CAD değişkenlerine eşler (geometri/sargı/malzeme), `fea_spec.analyses`
+  matrisini koşar: cogging, geri-EMK (THD), tork-açı **MTPA** süpürmesi, ripple, demag (sıcak 150°C),
+  + P2/P3 tohumları (termal steady-state, 1.2× aşırı-hız rotor gerilmesi). Sonuçları
+  `fea_spec.acceptance_targets`'a karşı **geç/kal** olarak puanlar → `fea/motorcad_results.json`.
+  API güncel sürümle doğrulandı (v0.8.6: `MotorCAD()`, `set_variable`, `show_magnetic_context`,
+  `do_magnetic_calculation`, `get_magnetic_graph[_point/_harmonics]`, `set_winding_coil`,
+  `do_mechanical_calculation`, `save_to_file`). Değişken-adı kayması için her set/get loglu +
+  hedef-değer yazdırır (V-cep adları sürüme göre değişir → kullanıcı onaylar).
+- **`verification/nx_drafting.py` — P6 resmi NX Drafting journal'ı (NXOpen, run_journal).**
+  Drafting'e geçer, A3 sayfa + FRONT/TFR-ISO görünüm; **antet + GD&T/kritik-ölçü şeması +
+  genel notlar + BOM** (hepsi canlı `manufacturing`/`em_design` verisinden) native NX notu olarak.
+  `dxf` argümanı: `drawings.py`'nin tam-ölçülü DXF sayfalarını (montaj/stator/rotor) NX'e import eder.
+  nx_builder tarzı: her adım guard'lı + Listing Window'a loglu.
+- **`verification/README.md`** — hand-off zinciri (cli fea → fea/ → sürücüler), çalıştırma, uyarılar.
+- **Performans modeli rafine (`em_design.py`):** `b_g1_peak_t` artık varsayılan **None → Br'den türetilir**.
+  Yeni `airgap_flux_density()` (PM manyetik devresi: A_m/A_g, recoil, Carter `g_eff`, kaçak `k_leak`)
+  + `carter_factor()`. **Etkin manyetik paket** `L_eff = k_stack·L` flux/torka uygulandı.
+  Kalibrasyon (k_leak 1.05, pole-arc 0.85) referans tasarımda eski ~0.85 T'yi yeniden üretir,
+  ama artık Br/mıknatıs-genişliği/kalınlık/hava-aralığı/kutup ile fiziksel ölçeklenir.
+  Net etki (varsayılan): tepe tork **473→~440 Nm** (k_stack=0.96 yükü), taban hız ~3480→**~3621 rpm**.
+  6 yeni test (test_em_design.py).
+- **`fea.py` zenginleştirme:** `geometry_mm`'e V-cep tanımı eklendi (magnet_thickness/width,
+  v_angle, magnets_per_pole, vertex_gap, end_barrier) → Motor-CAD/FEMM tam geometri alır.
+- **`tests/test_configs.py` (yeni):** configs/*.json yükle → expand_variants → validate + blueprint
+  üret (batch_build --dry-run yolunu kilitler). default temiz, sweep 9+1=10 varyant.
+- **DÜRÜST SINIR:** Sandbox bu oturumda kapalıydı (HYPERVISOR_VIRT_DISABLED) → testler
+  **statik incelendi** (base_speed/tork/sınırlar elle izlendi), **koşturulamadı**. Kullanıcı:
+  `python tests/test_em_design.py && python tests/test_configs.py` (+ diğerleri) ile doğrulamalı.
+
 ---
 
 ## Dosya/çıktı durumu
