@@ -1,5 +1,10 @@
 # SIRADAKİLER — yapacaklarımız
 
+> **AKTİF YOL HARİTASI:** uçtan uca yürütme planı artık `docs/PROJECT_PLAN.md`'de
+> (cowork ile üretildi): 12 faz P0–P10, FEA (Motor-CAD) → iterasyon → imalat (NX CAM
+> yalnız şaft+gövde), kabul kapıları fea_spec'e bağlı. Mevcut başlangıç noktası: **P1
+> EM FEA (Motor-CAD)** — PyMotorCAD kurulumu (Ek A) + FEMM çapraz-kontrol (femm_labels.csv).
+
 ## A) Analog çip projesi  ⟵ KULLANICININ ÖNCELİĞİ (beklemede)
 - Kullanıcı, **analog çip projesine** devam etmek istiyor.
 - Bu oturumda **henüz başlanmadı**; kullanıcı onayı bekleniyor.
