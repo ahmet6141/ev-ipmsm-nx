@@ -68,3 +68,29 @@ consistency, code quality, missing analyses/production) raised **47 findings, al
 | validate-inverted-housing-tube | em_design.py | Zero/negative jacket_thickness yields an inverted housing tube that validate() only catche | Fixed |
 | validate-missing-pocket-clearance-sign | em_design.py | Negative pocket_clearance / end_barrier makes the pocket smaller than the magnet -> magnet | Fixed |
 | validate-msg-wrong-param | em_design.py | Validation error message cites a non-existent parameter 'magnet_tilt_deg' | Fixed |
+
+---
+
+## 3D solid-model audit (2026-06-15)
+
+A second focused audit (3 dimensions: interferences/fit, NXOpen build-logic, 3D<->2D/BOM/FEA
+consistency) raised 17 findings, **15 confirmed** -> **9 fixed, 6 acknowledged** (intended
+simplifications). FEA hand-off also gained docs/FEA_HOWTO.md + fea/femm_labels.csv.
+
+| id | sev | file | finding | resolution |
+|---|---|---|---|---|
+| BL-02 | medium | nx_builder.py | Single-segment magnets (n_seg==1) are silently driven by the NX stack_length e | Fixed (explicit drive_with_stack flag; magnets no longer bound to stack_length) |
+| F1 | medium | fea.py | FEA slot-phase map models a 2-layer winding but the 3D/BOM build is 8 bars/slo | Fixed (winding strings corrected: integer-slot, all bars/slot one belt) |
+| F3 | medium | blueprint.py | No rotor-to-shaft retention or magnet axial retention feature is modelled, tho | Fixed (documented press-fit torque transfer + retention as mfg features) |
+| INT-2 | medium | blueprint.py | End-windings protrude axially beyond the cooling jacket at both ends (not cove | Fixed (end_margin tracks end-winding extent; jacket covers end-turns) |
+| BL-01 | low | nx_builder.py | Patterned create-step instances (magnets, conductors, end-windings) build N so | Fixed (every patterned create instance registered under a derived id) |
+| BL-03 | low | nx_builder.py | create-boolean bodies that touch a coincident face can be auto-merged or flagg | Fixed (validate() requires bar_clearance > 0) |
+| BL-04 | low | nx_builder.py | On a create operation the BooleanOperation.Type is still set to Create but no  | Fixed (warn if a create op carries a boolean target) |
+| F2 | low | manufacturing.py | End-winding copper mass is computed as a full slot-band annulus (teeth include | Fixed (end-turn copper scaled by slot-copper fraction, 4.0->0.79 kg) |
+| F4 | low | manufacturing.py | Balance lands called out in the drawing/GD&T are not present on the modelled s | Acknowledged (balance lands are a mfg feature, called out in drawings, not in the EM solid) |
+| F5 | low | preview.py | 2D previews draw magnet solids on top of the (larger) pocket-air cut, hiding t | Acknowledged (preview draw order is cosmetic; magnet visible over pocket) |
+| F6 | low | blueprint.py | Laminations are modelled as solid steel tubes; stacking factor lives only in t | Acknowledged (solid-tube laminations; stacking factor applied to mass) |
+| INT-1 | low | blueprint.py | Shaft journal and rotor bore are exactly coincident (zero-clearance press fit, | Acknowledged (coincident bore = intended press fit) |
+| INT-3 | low | blueprint.py | Housing-to-stator interface is a 0.5 mm radial GAP, not the 'shrink-fit' the p | Fixed (housing_gap comment: as-modelled clearance vs real shrink fit) |
+| INT-4 | low | blueprint.py | Hairpin risers/crowns are not radially/tangentially registered to the slot con | Acknowledged (hairpin crown is a per-slot bundle proxy) |
+| INT-5 | low | blueprint.py | Magnet solids and the rotor steel are independent bodies separated only by the | Acknowledged (0.15 mm pocket clearance = intended bonded-magnet glue gap) |

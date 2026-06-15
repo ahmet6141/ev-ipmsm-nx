@@ -22,16 +22,18 @@ from . import blueprint as _bp
 from . import em_design
 from .params import MotorParams
 
-# 60-degree phase-belt order for a balanced 3-phase double-layer winding,
+# 60-degree phase-belt order for a balanced 3-phase integer-slot winding,
 # one (phase, sign) per belt of q slots: A+, C-, B+, A-, C+, B-.
 _BELTS: List[Tuple[str, int]] = [("A", +1), ("C", -1), ("B", +1),
                                  ("A", -1), ("C", +1), ("B", -1)]
 
 
 def winding_layout(p: MotorParams) -> List[Tuple[str, int]]:
-    """Return [(phase, sign)] indexed by stator slot. For this integer-slot,
-    FULL-PITCH double-layer hairpin winding both slot layers carry the same
-    phase, so one (phase, sign) per slot fully describes the excitation."""
+    """Return [(phase, sign)] indexed by stator slot. This integer-slot (q) winding
+    puts each slot wholly in one 60-deg phase belt, so ALL conductors_per_slot
+    hairpin bars in a slot carry the same (phase, sign): one entry per slot fully
+    describes the excitation (the bars stack radially; chording via
+    winding.coil_span_slots would shift belts -- modelled full-pitch here)."""
     g = em_design.derive(p)
     q = max(1, int(round(g.slots_per_pole_per_phase)))
     return [_BELTS[(i // q) % 6] for i in range(p.stator.slot_count)]
@@ -95,7 +97,7 @@ def fea_spec(p: MotorParams, a: "em_design.EMAssumptions" = None) -> Dict[str, A
             "housing": {"material": m.housing_material},
         },
         "winding": {
-            "type": "double-layer integer-slot lap, full pitch, hairpin",
+            "type": "integer-slot distributed hairpin (%d bars/slot, all bars per slot in one phase belt), full pitch" % w.conductors_per_slot,
             "phases": w.phases, "q_slots_per_pole_per_phase": round(g.slots_per_pole_per_phase, 3),
             "conductors_per_slot": w.conductors_per_slot, "parallel_paths": w.parallel_paths,
             "series_turns_per_phase": round(e.series_turns_per_phase),
@@ -191,6 +193,64 @@ def to_dxf(blueprint: Dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# FEMM block-label recipe (import cross_section.dxf, then place these labels)
+# --------------------------------------------------------------------------- #
+def _rot(x: float, y: float, deg: float) -> Tuple[float, float]:
+    a = math.radians(deg)
+    c, s = math.cos(a), math.sin(a)
+    return (x * c - y * s, x * s + y * c)
+
+
+def femm_label_recipe(p: MotorParams) -> List[Dict[str, Any]]:
+    """One row per FEMM block label: interior point (x, y) + material, plus
+    circuit/turns for copper and the magnetisation direction for magnets. After
+    importing cross_section.dxf into FEMM, drop a block label at each (x, y) with
+    the listed property. Winding is modeled as ONE copper region per slot with
+    +/-conductors_per_slot turns (standard FEA equivalent of the discrete bars)."""
+    g = em_design.derive(p)
+    s, r = p.stator, p.rotor
+    rows: List[Dict[str, Any]] = []
+
+    def add(x, y, material, circuit="", turns="", magdir="", note=""):
+        rows.append({"x": round(x, 3), "y": round(y, 3), "material": material,
+                     "circuit": circuit, "turns": turns, "magdir": magdir, "note": note})
+
+    add((g.slot_body_outer_radius + g.stator_outer_radius) / 2.0, 0.0, "Steel",
+        note="stator yoke (lamination BH curve)")
+    ext = em_design._magnet_pocket_extent(p, g)
+    r_min = ext[1] if ext else g.shaft_radius + 5.0
+    add((g.shaft_radius + r_min) / 2.0, 0.0, "Steel", note="rotor core (lamination BH curve)")
+    add(g.rotor_outer_radius + r.air_gap / 2.0, 0.0, "Air", note="air gap")
+    add(g.shaft_radius / 2.0, 0.0, "Air", note="shaft bore (non-magnetic in EM, or assign shaft steel)")
+
+    # one copper region per slot, turns = +/- conductors_per_slot (sign = belt sign)
+    layout = winding_layout(p)
+    r_slot = (g.slot_body_inner_radius + g.slot_body_outer_radius) / 2.0
+    slot_pitch = 360.0 / s.slot_count
+    for i, (ph, sg) in enumerate(layout):
+        x, y = _rot(r_slot, 0.0, i * slot_pitch)
+        add(x, y, "Copper", circuit=ph, turns=sg * p.winding.conductors_per_slot,
+            note="slot %d (%d bars)" % (i, p.winding.conductors_per_slot))
+
+    # magnets: 2 V-arms x poles; magdir = magnetisation angle, N/S alternating per pole
+    arms = _bp.magnet_polygons(p, g)
+    th = _bp.v_tilt_deg(r.v_angle_deg)
+    base_dir = [-th, th]            # +Y arm, -Y arm thickness-axis angle
+    pole_pitch = 360.0 / r.pole_count
+    for k in range(r.pole_count):
+        flip = 180.0 if (k % 2) else 0.0
+        for arm_idx, poly in enumerate(arms):
+            cx = sum(pt[0] for pt in poly) / len(poly)
+            cy = sum(pt[1] for pt in poly) / len(poly)
+            x, y = _rot(cx, cy, k * pole_pitch)
+            magdir = (base_dir[arm_idx] + k * pole_pitch + flip) % 360.0
+            add(x, y, "NdFeB", magdir=round(magdir, 1),
+                note="pole %d %s arm (%s)" % (k, "+Y" if arm_idx == 0 else "-Y",
+                                              "N" if flip == 0 else "S"))
+    return rows
+
+
+# --------------------------------------------------------------------------- #
 # package writer
 # --------------------------------------------------------------------------- #
 def write_package(p: MotorParams, out_dir: str = "fea") -> List[str]:
@@ -216,4 +276,13 @@ def write_package(p: MotorParams, out_dir: str = "fea") -> List[str]:
         for i, (ph, sg) in enumerate(winding_layout(p)):
             fh.write("%d,%s,%s\n" % (i, ph, "+" if sg > 0 else "-"))
     written.append(csv_path)
+
+    lbl_path = os.path.join(out_dir, "femm_labels.csv")
+    with open(lbl_path, "w", encoding="utf-8") as fh:
+        fh.write("x_mm,y_mm,material,circuit,turns,magdir_deg,note\n")
+        for row in femm_label_recipe(p):
+            fh.write("%s,%s,%s,%s,%s,%s,%s\n" % (
+                row["x"], row["y"], row["material"], row["circuit"],
+                row["turns"], row["magdir"], row["note"]))
+    written.append(lbl_path)
     return written

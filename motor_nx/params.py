@@ -84,7 +84,9 @@ class ShaftParams:
 @dataclass
 class CoolingParams:
     jacket_thickness: float = 6.0       # radial thickness of the water jacket sleeve
-    housing_gap: float = 0.5            # shrink-fit gap stator OD <-> jacket bore
+    housing_gap: float = 0.5            # as-MODELLED radial clearance stator OD <-> jacket bore.
+    #                                     The real joint is an interference (shrink) fit; this gap
+    #                                     is the free-state assembly allowance, not the final fit.
     channel_type: str = "axial"         # "axial" | "spiral" | "none"
     channel_count: int = 12             # number of axial channels (channel_type == "axial")
     channel_diameter: float = 4.0       # MUST stay below jacket_thickness with wall margin: a Ø=jacket channel is tangent to both jacket faces (zero-wall, NX subtract fails). Ø4 in a 6 mm jacket -> 1 mm walls.

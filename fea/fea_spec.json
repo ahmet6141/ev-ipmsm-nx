@@ -91,7 +91,7 @@
     }
   },
   "winding": {
-    "type": "double-layer integer-slot lap, full pitch, hairpin",
+    "type": "integer-slot distributed hairpin (8 bars/slot, all bars per slot in one phase belt), full pitch",
     "phases": 3,
     "q_slots_per_pole_per_phase": 3.0,
     "conductors_per_slot": 8,

@@ -308,17 +308,25 @@ class MotorBuilder:
         bodies = feature.GetBodies()
         return bodies[0] if bodies else None
 
-    # -- per-kind step handlers ------------------------------------------- #
-    def _is_active_stack(self, z0, length):
-        return abs(z0) < 1e-6 and abs(length - self.stack_length) < 1e-6
+    def _register(self, step_id, i, body):
+        """Register a created body. The first instance keeps the step id (so later
+        booleans can target it); extra pattern instances get a derived id."""
+        self.bodies[step_id if i == 0 else "%s#%d" % (step_id, i)] = body
 
+    # -- per-kind step handlers ------------------------------------------- #
     def build_step(self, step):
         kind = step["kind"]
         op = step["boolean"]
         z0 = float(step.get("z0", 0.0))
         length = float(step.get("length", 0.0))
         target = self.bodies.get(step["target"]) if step.get("target") else None
-        use_stack = self._is_active_stack(z0, length)
+        # bind the axial length to the NX 'stack_length' expression ONLY for the
+        # steps the blueprint flags as active-stack (laminations/slots/conductors);
+        # discrete bodies (magnets/end-windings/housing) stay literal. (Inferring
+        # this from z0/length wrongly bound single-segment magnets to stack_length.)
+        use_stack = bool(step.get("drive_with_stack", False))
+        if op == "create" and step.get("target"):
+            self.errors.append("WARN %s: create op should not target a body" % step["id"])
 
         if kind == "tube":
             outer = self._circle_curve(0.0, 0.0, step["outer_radius"], z0)
@@ -343,8 +351,8 @@ class MotorBuilder:
                     cx, cy = self._rotate2d([[cx0, cy0]], i * angle)[0]
                     circ = self._circle_curve(cx, cy, step["outer_radius"], z0)
                     feat = self._extrude([circ], z0, length, op, target, use_stack)
-                    if op == "create" and i == 0:
-                        self.bodies[step["id"]] = self._feature_body(feat)
+                    if op == "create":
+                        self._register(step["id"], i, self._feature_body(feat))
 
         elif kind == "extrude":
             count = int(step.get("pattern_count", 1))
@@ -360,8 +368,8 @@ class MotorBuilder:
                     prof = self._rotate2d(step["profile"], i * angle)
                     curves = self._lines_from_polygon(prof, plane_z=z0)
                     feat = self._extrude(curves, z0, length, op, target, use_stack)
-                    if op == "create" and i == 0:
-                        self.bodies[step["id"]] = self._feature_body(feat)
+                    if op == "create":
+                        self._register(step["id"], i, self._feature_body(feat))
 
         elif kind == "revolve":
             curves = self._lines_from_polygon(

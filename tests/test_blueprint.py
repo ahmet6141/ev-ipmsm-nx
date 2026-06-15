@@ -90,6 +90,29 @@ def test_blueprint_serialises_and_counts():
     assert slot_step["pattern_count"] == p.stator.slot_count
 
 
+def test_drive_with_stack_flags():
+    # active-stack bodies bind the NX stack_length expression; discrete magnets must NOT
+    steps = blueprint.build_steps(MotorParams(), em_design.derive(MotorParams()))
+    by_role = {}
+    for s in steps:
+        by_role.setdefault(s.role, s)
+    assert by_role["stator_steel"].drive_with_stack is True
+    assert by_role["rotor_steel"].drive_with_stack is True
+    assert by_role["conductor"].drive_with_stack is True
+    assert by_role["magnet"].drive_with_stack is False
+    assert by_role["housing"].drive_with_stack is False
+
+
+def test_housing_axially_covers_end_windings():
+    p = MotorParams()
+    bp = blueprint.generate(p)
+    housing = next(s for s in bp["build_steps"] if s["role"] == "housing")
+    ews = [s for s in bp["build_steps"] if s["role"] == "end_winding"]
+    if ews:  # default models end-windings
+        front = min(s["z0"] for s in ews)
+        assert housing["z0"] <= front + 1e-6   # jacket overshadows the end-turns
+
+
 def test_invalid_variant_is_flagged():
     p = MotorParams()
     p.stator.tooth_width = 50.0  # absurd -> no room for the slot

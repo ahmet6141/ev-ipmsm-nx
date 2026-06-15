@@ -70,6 +70,10 @@ class BuildStep:
     # circular pattern about Z
     pattern_count: int = 1
     pattern_angle_deg: float = 0.0
+    # bind the extrude axial length to the NX 'stack_length' expression (active-stack
+    # laminations/slots/conductors). DISCRETE bodies (magnets, end-windings, housing)
+    # keep a literal length so editing stack_length in NX does not rescale them.
+    drive_with_stack: bool = False
     # partial / positioned revolve (kind="revolve"): sweep `angle_deg`, profile
     # placed in the half-plane at `start_angle_deg` about Z (default = full 360 at +X)
     angle_deg: float = 360.0
@@ -310,7 +314,7 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
         id="stator_steel", role="stator_steel", kind="tube", boolean="create",
         body_name="Stator_Lamination", material="electrical_steel", color=COL_STEEL,
         outer_radius=g.stator_outer_radius, inner_radius=g.bore_radius,
-        z0=0.0, length=p.stack_length,
+        z0=0.0, length=p.stack_length, drive_with_stack=True,
     ))
     # 2) slot cuts (one reference slot, patterned Q times)
     steps.append(BuildStep(
@@ -318,14 +322,19 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
         target="stator_steel", body_name="Slot_Cut", material="air", color=COL_STEEL,
         profile=stator_slot_polygon(p, g), z0=0.0, length=p.stack_length,
         pattern_count=s.slot_count, pattern_angle_deg=360.0 / s.slot_count,
+        drive_with_stack=True,
     ))
 
-    # 3) rotor lamination steel (annulus, bore = shaft fit)
+    # 3) rotor lamination steel (annulus, bore = shaft fit). NOTE: the rotor bore
+    #    is modelled coincident with the shaft OD -- torque transfer is a press/
+    #    shrink fit (interference, see docs/MANUFACTURING.md tolerances), not a
+    #    modelled keyway/spline; magnet axial retention (end rings) and balance
+    #    lands are likewise manufacturing features, not in this electromagnetic solid.
     steps.append(BuildStep(
         id="rotor_steel", role="rotor_steel", kind="tube", boolean="create",
         body_name="Rotor_Lamination", material="electrical_steel", color=COL_ROTOR,
         outer_radius=g.rotor_outer_radius, inner_radius=g.shaft_radius,
-        z0=0.0, length=p.stack_length,
+        z0=0.0, length=p.stack_length, drive_with_stack=True,
     ))
     # 4) magnet pockets (V): two arms, each patterned over the poles
     for idx, poly in enumerate(magnet_pocket_polygons(p, g)):
@@ -335,6 +344,7 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
             body_name=f"Magnet_Pocket_{idx}", material="air", color=COL_ROTOR,
             profile=poly, z0=0.0, length=p.stack_length,
             pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
+            drive_with_stack=True,
         ))
     # 4b) optional rotor lightening / cooling holes
     if r.lightening_holes > 0:
@@ -374,6 +384,7 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
             body_name=f"Hairpin_Bar_L{k}", material="copper", color=COL_COPPER,
             profile=poly, z0=0.0, length=p.stack_length,
             pattern_count=s.slot_count, pattern_angle_deg=360.0 / s.slot_count,
+            drive_with_stack=True,
         ))
 
     # 6b) end-winding. "envelope" = a toroidal ring per stack end (default, robust).
@@ -446,10 +457,16 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
         profile=shaft_profile(p, g),
     ))
 
-    # 8) cooling jacket / housing sleeve
+    # 8) cooling jacket / housing sleeve. The jacket should axially OVERSHADOW the
+    #    end-windings (the hottest copper), so the end margin tracks their extent.
     jacket_inner = g.stator_outer_radius + c.housing_gap
     jacket_outer = jacket_inner + c.jacket_thickness
     end_margin = 8.0
+    if w.model_endwindings and w.end_winding_height > 0:
+        ew_extent = w.end_winding_height
+        if getattr(w, "end_winding_style", "envelope") == "hairpin":
+            ew_extent *= 1.12   # crown shoulder+rise+crown_hz overshoots the nominal height
+        end_margin = max(end_margin, ew_extent + 3.0)
     steps.append(BuildStep(
         id="housing", role="housing", kind="tube", boolean="create",
         body_name="Cooling_Jacket", material="aluminium", color=COL_HOUSING,

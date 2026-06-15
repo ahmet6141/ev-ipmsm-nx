@@ -134,11 +134,16 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
         grp["count"] += row["count"]
         grp["volume_mm3"] += max(0.0, row["net_volume"])
 
+    ew_fraction = _end_winding_copper_fraction(p, g)
     items: List[Dict[str, Any]] = []
     for name, grp in groups.items():
         density = DENSITY.get(grp["material"], 0.0)
-        # lamination stacks: effective steel = envelope volume x stacking factor
+        # lamination stacks: effective steel = envelope volume x stacking factor.
+        # end-turn envelope is a full slot-band annulus (incl. teeth) -> scale it to
+        # the real slot-copper fraction so the BOM isn't a gross over-estimate.
         factor = mat.stacking_factor if grp["laminated"] else 1.0
+        if name.startswith("Stator winding - end"):
+            factor = ew_fraction
         mass = grp["volume_mm3"] * 1e-9 * density * factor
         items.append({
             "component": name,
@@ -155,7 +160,7 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
             it["note"] = "%d sheets @ %.2f mm (stacking %.2f)" % (
                 sheets, p.stator.lamination_thickness, mat.stacking_factor)
         elif it["component"].startswith("Stator winding - end"):
-            it["note"] = "solid-envelope volume (upper-bound copper; real end-turns are part air)"
+            it["note"] = "envelope scaled by slot-copper fraction %.2f (end-turn estimate)" % ew_fraction
 
     by_material: Dict[str, float] = {}
     for it in items:
@@ -177,6 +182,17 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
         "magnet_mass_kg": next((i["mass_kg"] for i in items if "magnet" in i["component"].lower()), 0.0),
         "copper_mass_kg": round(sum(i["mass_kg"] for i in items if i["material"].startswith("Copper")), 3),
     }
+
+
+def _end_winding_copper_fraction(p: MotorParams, g) -> float:
+    """Real slot-copper cross-section / end-winding-envelope annulus cross-section.
+    The envelope tube spans the whole slot-band annulus (teeth included); only this
+    fraction is actually copper, so scaling the envelope mass by it gives a sane
+    end-turn copper mass instead of a gross over-estimate."""
+    bars = _bp.conductor_polygons(p, g)
+    cu_area = sum(_polygon_area(b) for b in bars) * p.stator.slot_count
+    annulus = math.pi * (g.slot_body_outer_radius ** 2 - g.slot_body_inner_radius ** 2)
+    return min(1.0, cu_area / annulus) if annulus > 0 else 1.0
 
 
 def _material_spec(material: str, p: MotorParams) -> str:

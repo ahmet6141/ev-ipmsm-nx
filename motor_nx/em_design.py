@@ -220,6 +220,9 @@ def validate(p: MotorParams) -> List[str]:
         issues.append("conductors_per_slot must be >= 1.")
     if w.parallel_paths < 1:
         issues.append("parallel_paths must be >= 1.")
+    if w.bar_clearance <= 0:
+        issues.append("bar_clearance must be > 0 (a bar touching the slot wall is a "
+                      "zero-clearance coincident face the NX build cannot resolve cleanly).")
     if w.phases < 1:
         issues.append("phases must be >= 1.")
     # Mirror conductor_polygons() EXACTLY: n bars + (n+1) clearances stack
