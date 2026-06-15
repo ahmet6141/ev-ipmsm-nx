@@ -24,7 +24,7 @@ referansları (bkz. dosya sonundaki kaynaklar).
 | back-iron (boyunduruk) | 13 | mm | Boyunduruk akı yoğunluğu ~1.5–1.6 T |
 | diş genişliği (min) | 5.6 | mm | Oluk adımı bore'da ≈ 9.37 mm; diş akısı ~1.6–1.7 T |
 | oluk ağzı | 1.9 × 1.0 | mm | Yarı-kapalı; cogging/oluk-harmoniği düşürür |
-| oluk gövde genişliği | ~3.9 | mm | `tooth_width`'ten türetilir (dikdörtgen hairpin oluğu) |
+| oluk gövde genişliği | ~3.88 | mm | `tooth_width`'ten türetilir (dikdörtgen hairpin oluğu) |
 | iletken / oluk | 8 | — | 8 katmanlı hairpin; AC kaybı 2-kat'a göre ~%80 ↓ |
 | paralel yol | 2 | — | Transpozisyon sonrası dengeli |
 | mıknatıs G × K | 26 × 4.5 | mm | Bacak uzunluğu × manyetizasyon kalınlığı (V başına 2 adet) |
@@ -33,7 +33,7 @@ referansları (bkz. dosya sonundaki kaynaklar).
 | merkez nervür (yarı) | 1.0 | mm | d-ekseni postu (toplam ~2 mm); 16–18k rpm yükünü taşır |
 | şaft çapı / boru | 45 / 14 | mm | İçi boş şaft (yağ-beslemeli rotor soğutma) |
 | soğutma ceketi kalınlığı | 6 | mm | Su-glikol ceket, stator OD çevresi |
-| lamine kalınlığı | 0.27 | mm | M250-35A sınıfı; ~900 Hz için demir kaybı/maliyet dengesi |
+| lamine kalınlığı | 0.27 | mm | M250-27 sınıfı; ~900 Hz için demir kaybı/maliyet dengesi |
 
 > 800V mimariler için: 0.20 mm (NO20) lamine + sargı tur/paralel-yol seçimi.
 
@@ -70,12 +70,12 @@ aşmamasını garanti eder — böylece NX'te imkânsız bir kesim hiç denenmez
 
 ## Malzemeler
 
-- **Lamineler:** yönsüz silisli çelik 0.27 mm (M250-35A / 35JN sınıfı); rotor için
+- **Lamineler:** yönsüz silisli çelik 0.27 mm (M250-27 / 27JN sınıfı); rotor için
   yüksek-mukavemetli sınıf (≥450 MPa) ince köprü santrifüj gerilmesi için.
-- **Mıknatıslar:** sinterlenmiş NdFeB, yüksek koersivite (N42UH / N45SH / N48SH),
+- **Mıknatıslar:** sinterlenmiş NdFeB, yüksek koersivite — **varsayılan N42SH** (N45SH / N48UH alternatif),
   ~150–180 °C çalışma / demanyetizasyon güvenliği.
 - **Sargı:** dikdörtgen bakır mıknatıs teli (C11000), yüksek-sıcaklık emaye; hairpin
-  taçları lazer/TIG kaynaklı. Oluk doluluğu ~0.65–0.75 (yuvarlak telde ~0.4).
+  taçları lazer/TIG kaynaklı. Oluk doluluğu: brüt ~0.70, **net bakır ~0.60** (yuvarlak telde ~0.4).
 - **Şaft:** alaşımlı çelik (42CrMo4/4140). **Gövde:** döküm alüminyum + su ceketi.
 
 ## Türetilen büyüklükler

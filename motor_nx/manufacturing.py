@@ -158,6 +158,7 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
     return {
         "name": p.name,
         "line_items": sorted(items, key=lambda i: -i["mass_kg"]),
+        "mass_by_material_kg": by_material,
         "active_mass_kg": round(sum(i["mass_kg"] for i in items
                                     if i["component"].startswith(("Stator lam", "Rotor lam", "Rotor mag", "Stator wind"))), 3),
         "total_mass_kg": total,
@@ -247,8 +248,9 @@ def general_notes() -> List[str]:
     """Datum strategy, stack-up budget and quality notes (web-grounded)."""
     return [
         "Datum strategy: the bearing-journal axis (A / A-B) is the primary rotational datum; "
-        "reference rotor OD, magnet-pocket pattern and end-face squareness to it; reference stator "
-        "bore, slot pattern and OD shrink-fit to the housing register.",
+        "reference rotor OD and end-face squareness to it. Datum B = the rotor lamination bore / "
+        "d-axis (concentric to A via the shaft press-fit); the magnet-pocket pattern is located to B. "
+        "Reference stator bore, slot pattern and OD shrink-fit to the housing register.",
         "Eccentricity stack-up: keep combined static+dynamic eccentricity <= 0.07 mm (~10% of the "
         "0.70 mm gap). As RSS of bore TIR (<=0.02), rotor-OD TIR (<=0.02) and journal/housing "
         "coaxiality (0.01 each) this is ~0.03-0.05 mm, comfortably within budget; beyond ~0.07 mm "
@@ -256,7 +258,7 @@ def general_notes() -> List[str]:
         "Lamination quality: progressive-die stamping holds slot/tooth/bridge/bore to +/-0.02 mm; "
         "per-sheet 0.27 mm +/-0.01; burr < ~0.02 mm (verify IEC 60404) or eddy loss rises 15-20% "
         "and the stacking factor (target 0.95-0.97) drops. Backlack-bond the stator stack.",
-        "Magnet handling: bond UNMAGNETIZED N42SH segments (4 axial, ~0.2 mm gap) into the V pockets "
+        "Magnet handling: bond UNMAGNETIZED N42SH segments (4 axial, ~0.1 mm gap) into the V pockets "
         "with high-temp epoxy, then magnetize-in-place on the assembled rotor; verify by back-EMF / "
         "surface-flux map. Keep the operating point above the knee at max temperature.",
         "Surface finishes: bearing journals Ra <= 0.4 um (ground); stator bore + rotor OD Ra <= "

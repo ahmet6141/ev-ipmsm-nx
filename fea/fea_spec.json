@@ -65,7 +65,7 @@
     "magnet": {
       "grade": "N42SH",
       "Br_T_at_20C": 1.28,
-      "Hcb_kA_per_m": 915,
+      "Hcb_kA_per_m": 970.1,
       "Hcj_kA_per_m": 1592.0,
       "mu_recoil": 1.05,
       "Br_tempco_pct_per_C": -0.12,
@@ -81,7 +81,7 @@
       "conductivity_S_per_m_20C": 59600000.0,
       "temp_coeff_per_C": 0.00393,
       "insulation_class": "H (180 C) hairpin enamel",
-      "slot_fill_factor": 0.62
+      "slot_fill_factor": 0.6
     },
     "shaft": {
       "material": "alloy steel (e.g. 42CrMo4), yield ~750 MPa"
@@ -374,8 +374,8 @@
     ]
   },
   "excitation": {
-    "rated_current_A_rms": 130,
-    "peak_current_A_rms": 282,
+    "rated_current_A_rms": 126,
+    "peak_current_A_rms": 273,
     "current_advance_angle_deg_from_q_axis": [
       0,
       5,
@@ -391,11 +391,11 @@
     "note": "sweep beta to locate MTPA; IPM saliency contributes reluctance torque"
   },
   "operating_points": {
-    "dc_bus_V": 350.0,
-    "base_speed_rpm": 4307,
+    "dc_bus_V": 400.0,
+    "base_speed_rpm": 3480,
     "max_speed_rpm": 18000,
-    "corner_torque_Nm": 473,
-    "continuous_torque_Nm": 218
+    "corner_torque_Nm": 458,
+    "continuous_torque_Nm": 211
   },
   "mesh": {
     "airgap_radial_layers": 3,
@@ -466,8 +466,8 @@
     }
   ],
   "acceptance_targets": {
-    "peak_torque_Nm_min": 426,
-    "continuous_torque_Nm_min": 197,
+    "peak_torque_Nm_min": 412,
+    "continuous_torque_Nm_min": 190,
     "torque_ripple_pct_max": 5.0,
     "cogging_pct_of_rated_max": 1.0,
     "no_demag_at": "peak current AND 150 C magnet temp",

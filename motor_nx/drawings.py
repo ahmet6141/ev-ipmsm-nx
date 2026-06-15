@@ -384,7 +384,7 @@ def rotor_sheet(p: MotorParams, date: str = "-------") -> Drawing:
     d.centerlines(Ro * 1.2)
     y = Ro + 12
     d.dim_h(-Ro, Ro, y, "%cROTOR OD %.1f  (%d POLES)" % (0xD8, 2 * Ro, p.rotor.pole_count))
-    d.dim_h(-g.shaft_radius, g.shaft_radius, y + 13, "%cSHAFT BORE %.0f" % (0xD8, p.shaft.diameter))
+    d.dim_h(-g.shaft_radius, g.shaft_radius, y + 13, "%cROTOR BORE (shaft fit) %.0f" % (0xD8, p.shaft.diameter))
     d.leader(Ro - p.rotor.outer_bridge, Ro * 0.05, Ro + 10, Ro * 0.55,
              "OUTER BRIDGE %.1f" % p.rotor.outer_bridge)
     d.leader(Ro * 0.62, Ro * 0.22, -Ro - 10, Ro * 0.55,

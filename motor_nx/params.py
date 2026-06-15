@@ -19,7 +19,7 @@ geometrically impossible combinations before a build is attempted.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Tuple
 
 
@@ -36,7 +36,7 @@ class StatorParams:
     slot_opening_depth: float = 1.0     # radial depth of the slot mouth / tang
     back_iron_thickness: float = 13.0   # stator yoke radial thickness (OD -> slot bottom)
     slot_bottom_fillet: float = 1.0     # fillet radius at the slot bottom corners
-    lamination_thickness: float = 0.27  # electrical-steel sheet thickness (e.g. M250-35A)
+    lamination_thickness: float = 0.27  # electrical-steel sheet thickness (M250-27 class)
 
 
 @dataclass
@@ -99,8 +99,9 @@ class MaterialParams:
     magnet_br_t: float = 1.28                 # remanence Br @ 20 C
     magnet_hcj_ka_m: float = 1592.0           # intrinsic coercivity Hcj (>= 20 kOe)
     magnet_max_service_c: float = 150.0       # max continuous magnet temperature
+    magnet_mu_recoil: float = 1.05            # recoil permeability (2nd-quadrant line slope)
     magnet_segments_axial: int = 4            # axial magnet segments (eddy-loss control); 1 = solid block
-    magnet_seg_gap_mm: float = 0.2            # insulation/adhesive gap between axial magnet segments
+    magnet_seg_gap_mm: float = 0.1            # insulation/adhesive gap between axial magnet segments
     electrical_steel: str = "0.27 mm NO silicon steel (M250-27 class)"
     stacking_factor: float = 0.96             # iron fill of the lamination stack
     copper_insulation_class: str = "H (180 C) hairpin enamel"
@@ -133,12 +134,10 @@ class MotorParams:
             if f.name not in data:
                 continue
             value = data[f.name]
-            if is_dataclass(f.type) or (isinstance(value, dict) and f.name in _GROUP_TYPES):
-                group_cls = _GROUP_TYPES.get(f.name)
-                if group_cls is not None and isinstance(value, dict):
-                    kwargs[f.name] = _merge_group(group_cls, value)
-                    continue
-            kwargs[f.name] = value
+            if f.name in _GROUP_TYPES and isinstance(value, dict):
+                kwargs[f.name] = _merge_group(_GROUP_TYPES[f.name], value)
+            else:
+                kwargs[f.name] = value
         return cls(**kwargs)
 
     def to_json(self, indent: int = 2) -> str:
@@ -185,9 +184,14 @@ class MotorParams:
                 val = getattr(group, f.name)
                 if isinstance(val, bool) or isinstance(val, str):
                     continue  # expressions carry numeric dimensions only
-                unit = "deg" if f.name.endswith("_deg") else ("" if isinstance(val, int) and "count" in f.name else "mm")
-                if "count" in f.name or "holes" in f.name or f.name in ("phases", "parallel_paths", "conductors_per_slot"):
-                    unit = ""  # dimensionless counts
+                # every dimension is a float (-> mm, or deg for *_deg); every
+                # count is an int (-> dimensionless). bools were skipped above.
+                if f.name.endswith("_deg"):
+                    unit = "deg"
+                elif isinstance(val, int):
+                    unit = ""    # dimensionless count (poles, slots, paths, ...)
+                else:
+                    unit = "mm"
                 out.append((f"{group_name}_{f.name}", float(val), unit))
         return out
 

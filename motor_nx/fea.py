@@ -76,7 +76,10 @@ def fea_spec(p: MotorParams, a: "em_design.EMAssumptions" = None) -> Dict[str, A
             },
             "magnet": {
                 "grade": m.magnet_grade, "Br_T_at_20C": m.magnet_br_t,
-                "Hcb_kA_per_m": 915, "Hcj_kA_per_m": m.magnet_hcj_ka_m, "mu_recoil": 1.05,
+                # Hcb from the linear recoil line Br = mu0*mu_recoil*Hcb (kept
+                # self-consistent with Br/mu_recoil instead of a hardcoded value).
+                "Hcb_kA_per_m": round(m.magnet_br_t / (4e-7 * math.pi * m.magnet_mu_recoil) / 1000.0, 1),
+                "Hcj_kA_per_m": m.magnet_hcj_ka_m, "mu_recoil": m.magnet_mu_recoil,
                 "Br_tempco_pct_per_C": -0.12, "Hcj_tempco_pct_per_C": -0.55,
                 "max_service_C": m.magnet_max_service_c,
                 "density_kg_m3": 7500, "resistivity_uOhm_m": 1.4,

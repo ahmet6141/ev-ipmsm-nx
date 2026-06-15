@@ -100,7 +100,7 @@ hat-sonu testi — tamamı `manufacturing.general_notes()` içinde.
 ## 3. İmalat süreci
 
 ### Lamine
-NO silisli çelik 0.25-0.27 mm (M250-35A / NO20 sınıfı) — 18 krpm / 6 kutupta f_e ~900 Hz
+NO silisli çelik 0.25-0.27 mm (M250-27 / NO20 sınıfı) — 18 krpm / 6 kutupta f_e ~900 Hz
 için düşük demir kaybı. **İlerlemeli kalıp** (progressive-die) sertmetal takımla seri
 üretim; lazer kesim yalnız prototip (kesim kenarı manyetik özelliği bozar). Çapak <15-25 µm.
 **Paketleme:** stator için **backlack** (öz-yapışkanlı, ısı+basınçla kürlenen epoksi
@@ -120,7 +120,7 @@ rotorda **yerinde mıknatısla** (pulse fikstür) — kırılgan mıknatıslı b
 sıcaklık katsayısı ~−0.11..−0.12 %/°C (Kr derating). Doğrulama: back-EMF / yüzey-akı haritası.
 
 ### Sargı (hairpin)
-Dikdörtgen emaye Cu bar, **oluk başına 8 bar × 54 oluk**, doluluk >%70. **Form:** düzleştir →
+Dikdörtgen emaye Cu bar, **oluk başına 8 bar × 54 oluk**, brüt doluluk ~%70 (net bakır ~0.60). **Form:** düzleştir →
 kes → uç soy → **U (hairpin)** büküm (katman-bazlı pin şekli). **Oluk astarı:** S-katlı
 Nomex-Kapton-Nomex (800 V için Kapton MT+) — pin yerleşiminden önce. **Yerleştir → bük (twist)**
 kaynak tarafında bitişik bacakları eşleştir → **lazer/TIG kaynak** çift-çift taç uçları;

@@ -379,7 +379,8 @@ class EMAssumptions:
     an FEA / Motor-CAD pass refines airgap flux, saturation, losses and saliency."""
     j_cont_a_mm2: float = 12.0       # continuous rms current density in slot copper
     j_peak_a_mm2: float = 26.0       # short-term peak rms current density
-    slot_fill: float = 0.62          # copper fill of the slot body (hairpin 0.6-0.7)
+    slot_fill: float = 0.60          # NET copper fill of the slot body (matches the modeled
+    #                                  8-bar geometry ~0.595; hairpin gross ~0.7, net ~0.6)
     b_g1_peak_t: float = 0.85        # fundamental airgap flux density from the PMs (peak)
     saliency_factor: float = 1.25    # IPM reluctance-torque bonus over PM-only (1.2-1.4)
     dc_bus_v: float = 400.0          # inverter DC-link voltage (400 V class; 800 V via turns)

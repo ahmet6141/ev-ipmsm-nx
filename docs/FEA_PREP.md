@@ -62,7 +62,7 @@ ve EM + termal + yapısal **doğrulama matrisi** + kabul kriterleri.
 > ve *tepe* zıt-akıda değerlendirilir — mıknatıs B'si knee'nin altına düşmemeli.
 
 ### 2.3 İletken / şaft / housing
-- **Bakır:** σ = 5.96×10⁷ S/m (20 °C), sıc. katsayısı 0.00393 /°C, H sınıf yalıtım, dolum 0.62.
+- **Bakır:** σ = 5.96×10⁷ S/m (20 °C), sıc. katsayısı 0.00393 /°C, H sınıf yalıtım, net dolum 0.60.
 - **Şaft:** alaşımlı çelik (ör. 42CrMo4), akma ~750 MPa.
 - **Housing/ceket:** döküm alüminyum (su ceketi).
 
