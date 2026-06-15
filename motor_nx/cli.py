@@ -9,6 +9,7 @@ manufacturing/FEA hand-off data -- all without Siemens NX.
     python -m motor_nx.cli bom          [config.json] [--csv b.csv]  Bill of Materials
     python -m motor_nx.cli tolerances   [config.json] [--csv t.csv]  GD&T scheme
     python -m motor_nx.cli drawings     [config.json] [-o drawings/] 2D drawings (DXF+SVG)
+    python -m motor_nx.cli analysis     [config.json]              loss/thermal/demag/stress/cogging
 
 `config.json` is a (possibly partial) MotorParams dict; omit it for the default
 EV traction variant. The blueprint JSON is the exact input the NX builder
@@ -60,6 +61,9 @@ def main(argv=None):
     p_dwg = sub.add_parser("drawings", help="2D manufacturing drawings (DXF + SVG): assembly, stator, rotor")
     p_dwg.add_argument("config", nargs="?")
     p_dwg.add_argument("-o", "--out", default="drawings")
+
+    p_an = sub.add_parser("analysis", help="first-order loss / thermal / demag / rotor-stress / cogging analyses")
+    p_an.add_argument("config", nargs="?")
 
     args = parser.parse_args(argv)
     params = _load_params(args.config)
@@ -129,6 +133,11 @@ def main(argv=None):
         print("wrote %d 2D drawing files to %s/:" % (len(written), args.out))
         for path in written:
             print("  ", path)
+        return 0
+
+    if args.cmd == "analysis":
+        from . import analysis
+        print(analysis.analysis_report(params))
         return 0
 
     if args.cmd == "tolerances":

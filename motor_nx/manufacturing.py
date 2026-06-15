@@ -31,6 +31,13 @@ DENSITY = {
 # materials that are removed (cuts) -- never counted as mass
 _VOID = {"air", "coolant"}
 
+# indicative material cost (USD/kg), market-VOLATILE -- NdFeB especially (heavy-rare-
+# earth Dy/Tb content). Order-of-magnitude only; replace with a live quote.
+COST_PER_KG = {
+    "NdFeB": 90.0, "copper": 11.0, "electrical_steel": 2.8,
+    "aluminium": 3.5, "shaft_steel": 2.5,
+}
+
 
 # --------------------------------------------------------------------------- #
 # volume integration over build steps
@@ -138,6 +145,7 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
             "material": _material_spec(grp["material"], p),
             "qty": grp["count"],
             "mass_kg": round(mass, 3),
+            "cost_usd": round(mass * COST_PER_KG.get(grp["material"], 0.0), 2),
         })
 
     # number of laminations (sheets) for the stacks
@@ -154,11 +162,15 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
         key = it["material"].split(" ")[0]
         by_material[key] = round(by_material.get(key, 0.0) + it["mass_kg"], 3)
     total = round(sum(it["mass_kg"] for it in items), 3)
+    total_cost = round(sum(it["cost_usd"] for it in items), 2)
+    magnet_cost = next((it["cost_usd"] for it in items if "magnet" in it["component"].lower()), 0.0)
 
     return {
         "name": p.name,
         "line_items": sorted(items, key=lambda i: -i["mass_kg"]),
         "mass_by_material_kg": by_material,
+        "material_cost_usd": total_cost,
+        "magnet_cost_share_pct": round(100.0 * magnet_cost / total_cost, 1) if total_cost else 0.0,
         "active_mass_kg": round(sum(i["mass_kg"] for i in items
                                     if i["component"].startswith(("Stator lam", "Rotor lam", "Rotor mag", "Stator wind"))), 3),
         "total_mass_kg": total,
@@ -189,9 +201,12 @@ def TOLERANCES(p: MotorParams) -> List[Dict[str, str]]:
     stator features referenced to the housing register."""
     g = em_design.derive(p)
     pocket_w = p.rotor.magnet_thickness + 2 * p.rotor.pocket_clearance
+    st = eccentricity_stackup(p)
     return [
         {"feature": "Air gap (radial) uniformity", "nominal": "%.2f mm" % p.rotor.air_gap, "datum": "A",
-         "tolerance": "not directly dimensioned; assembled eccentricity budget <= 0.07 mm (~10% of gap, RSS of bore + rotor-OD + coaxiality)",
+         "tolerance": "not directly dimensioned; assembled eccentricity budget <= %.3f mm (~10%% of gap); "
+                      "computed RSS of bore+rotor-OD+coaxiality = %.3f mm (%s)"
+                      % (st["budget_mm"], st["rss_mm"], "OK" if st["rss_pass"] else "OVER"),
          "gdt": "governed by the stack-up below",
          "rationale": "Bg ~ 1/g; asymmetry -> UMP, 2x-line/pole-passing NVH, cogging"},
         {"feature": "Stator bore diameter", "nominal": "%.1f mm" % p.stator.bore_diameter, "datum": "A (housing register)",
@@ -276,20 +291,47 @@ def general_notes() -> List[str]:
 def bom_report(p: MotorParams) -> str:
     bom = bill_of_materials(p)
     lines = ["Bill of Materials -- %s" % bom["name"],
-             "  %-32s %-34s %6s %10s" % ("component", "material", "qty", "mass[kg]")]
+             "  %-30s %-30s %5s %9s %9s" % ("component", "material", "qty", "mass[kg]", "cost[$]")]
     for it in bom["line_items"]:
-        lines.append("  %-32s %-34s %6d %10.3f"
-                     % (it["component"], it["material"][:34], it["qty"], it["mass_kg"]))
+        lines.append("  %-30s %-30s %5d %9.3f %9.0f"
+                     % (it["component"], it["material"][:30], it["qty"], it["mass_kg"], it["cost_usd"]))
     lines += [
-        "  " + "-" * 84,
+        "  " + "-" * 86,
         "  active material mass : %.2f kg  (steel + copper + magnet)" % bom["active_mass_kg"],
         "  magnet (NdFeB) mass  : %.3f kg" % bom["magnet_mass_kg"],
         "  copper mass          : %.3f kg" % bom["copper_mass_kg"],
         "  TOTAL modelled mass  : %.2f kg" % bom["total_mass_kg"],
-        "  (masses are geometry-derived estimates; exclude impregnation, "
-        "fasteners, sensors, connectors)",
+        "  material cost (indicative) : $%.0f  (magnet share %.0f%%)"
+        % (bom["material_cost_usd"], bom["magnet_cost_share_pct"]),
+        "  (geometry-derived mass; cost is market-volatile $/kg, excludes "
+        "processing/labour/consumables, fasteners, sensors, connectors)",
     ]
     return "\n".join(lines)
+
+
+def eccentricity_stackup(p: MotorParams) -> Dict[str, Any]:
+    """COMPUTE the air-gap eccentricity stack-up (was hand-asserted prose). The
+    budget is ~10% of the mechanical air gap; the achieved estimate is the RSS of
+    the independent runout/coaxiality contributors that feed the assembled gap."""
+    # per-feature contributors (mm) -- mirror the TOLERANCES GD&T callouts
+    contributors = {
+        "stator_bore_TIR": 0.02,
+        "rotor_OD_TIR": 0.02,
+        "journal_coaxiality": 0.01,
+        "rotor_seat_coaxiality": 0.01,
+    }
+    budget = 0.10 * p.rotor.air_gap
+    rss = math.sqrt(sum(v * v for v in contributors.values()))
+    worst_case = sum(contributors.values())
+    return {
+        "air_gap_mm": p.rotor.air_gap,
+        "budget_mm": round(budget, 4),
+        "contributors_mm": contributors,
+        "rss_mm": round(rss, 4),
+        "worst_case_sum_mm": round(worst_case, 4),
+        "rss_pass": rss <= budget + 1e-9,
+        "worst_case_pass": worst_case <= budget + 1e-9,
+    }
 
 
 def tolerance_report(p: MotorParams) -> str:
