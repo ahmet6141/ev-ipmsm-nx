@@ -67,6 +67,20 @@ FEA paketini de loglar/üretir.
 - **`fea/` üretildi + doğrulandı:** `fea_spec.json`, `cross_section.dxf`, `winding.csv`.
 - CLI `fea` komutu; builder varsayılan build'de `fea/`'yı otomatik üretir.
 
+## Adım 5 — İmalat hazırlığı (2026-06-15)
+- **`motor_nx/manufacturing.py`:** modelden türetilen **BOM** (build step hacimleri →
+  extrude=alan×boy, tube=halka, revolve=Pappus; kesimler hedef gövdeden net'lenir;
+  hacim×yoğunluk×paketleme faktörü → kütle). Varsayılan: **toplam ~43.5 kg** (aktif 39.6),
+  48 NdFeB segment 1.4 kg, 432 bar+uç-tur 6.4 kg bakır, ~496 lamine yaprak.
+- **GD&T / kritik ölçü tolerans şeması** (12 özellik + datum + gerekçe) + **genel notlar**.
+  Değerler web ile temellendirildi + **düşmanca incelendi** (6 tutarsızlık düzeltildi:
+  eksantriklik bütçesi 0.07 mm RSS, mıknatıs cebi boşluğu gerçekçi 0.10-0.25, balans
+  G2.5→hedef G1.0, rulman seat-bazlı fit, shrink sonrası bore yuvarlaklığı, paket-boyu türetimi).
+- CLI **`bom`** + **`tolerances`** komutları (+ `--csv`). `tests/test_manufacturing.py` **7/7**.
+- **`docs/MANUFACTURING.md`:** BOM + tolerans tablosu + tam imalat süreci (lamine/mıknatıs/
+  hairpin/gövde) + 16 adımlı montaj sırası + EOL test + kaynaklar.
+- Commit'lendi + push edildi (`ev-ipmsm-nx`).
+
 ---
 
 ## Dosya/çıktı durumu

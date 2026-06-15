@@ -9,10 +9,10 @@
 
 ## B) Motor projesi — kalan adımlar (opsiyonel, onayla)
 1. **Adım 5 — İmalat hazırlığı:**
-   - Tolerans/GD&T şeması (kritik: hava aralığı, oluk, mıknatıs cebi, rulman yatakları).
-   - **BOM** (malzeme listesi: lamine, mıknatıs N42SH, hairpin bakır, şaft, housing, soğutucu).
-   - İmalat resimleri (NX drafting veya STEP'ten) + kritik ölçü tablosu.
-   - Lamine kalıp/kesim notları, mıknatıs montaj/magnetizasyon notları.
+   - ✅ Tolerans/GD&T şeması — `manufacturing.py` (12 özellik, web-temelli + denetlendi).
+   - ✅ **BOM** — `manufacturing.py` (modelden kütle/adet; CLI `bom`/`tolerances` + CSV).
+   - ✅ Lamine/mıknatıs/sargı/gövde süreç notları + montaj sırası — `docs/MANUFACTURING.md`.
+   - ⬜ KALAN: imalat **resimleri** (NX drafting veya STEP'ten 2D), kalıp/kesim resim seti.
 2. **Temizlik:** test çıktılarını sil → `motor_v2..v8.*`, `motor_hairpin*.*`, `nx_smoke*.*`,
    geçici `_perf.py` / `_fea.py`. (Kullanıcı onayı gerek — kalıcı silme.)
 3. **Commit/push:** değişiklikleri `git add/commit/push` ile `ev-ipmsm-nx` repoya gönder

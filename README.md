@@ -23,13 +23,15 @@ builder** ayrımının Siemens NX'e taşınmış hâli:
 | Boyutlandırma | [motor_nx/em_design.py](motor_nx/em_design.py) | Hayır | Türetilmiş geometri, sargı faktörleri, **tasarım doğrulaması** |
 | Blueprint | [motor_nx/blueprint.py](motor_nx/blueprint.py) | Hayır | Saf-matematik geometri → sıralı CAD "build step" listesi + JSON |
 | Önizleme | [motor_nx/preview.py](motor_nx/preview.py) | Hayır | NX'siz SVG kesit (görsel doğrulama) |
+| İmalat | [motor_nx/manufacturing.py](motor_nx/manufacturing.py) | Hayır | Geometriden BOM (kütle/adet) + GD&T tolerans şeması |
+| FEA | [motor_nx/fea.py](motor_nx/fea.py) | Hayır | FEA hand-off paketi (spec JSON + DXF + sargı haritası) |
 | NX builder | [motor_nx/nx_builder.py](motor_nx/nx_builder.py) | **Evet** | NXOpen Python ile build step'leri NX'te modele çevirir + export |
 | Batch sürücü | [batch_build.py](batch_build.py) | Hayır | run_journal.exe'yi sürer; parametre süpürme + manifest |
-| CLI | [motor_nx/cli.py](motor_nx/cli.py) | Hayır | rapor / doğrula / blueprint / önizleme |
+| CLI | [motor_nx/cli.py](motor_nx/cli.py) | Hayır | report / validate / blueprint / preview / bom / tolerances / fea |
 
-`params`, `em_design`, `blueprint`, `preview` düz CPython ile çalışır ve tamamen test
-edilebilir. Yalnızca `nx_builder` `NXOpen`'ı import eder; bu yüzden o, NX içinde
-`run_journal.exe` ile çalıştırılır.
+`params`, `em_design`, `blueprint`, `preview`, `manufacturing`, `fea` düz CPython ile
+çalışır ve tamamen test edilebilir. Yalnızca `nx_builder` `NXOpen`'ı import eder; bu
+yüzden o, NX içinde `run_journal.exe` ile çalıştırılır.
 
 ---
 
@@ -45,8 +47,16 @@ python -m motor_nx.cli preview -o preview.svg
 # NX builder'ın tükettiği blueprint JSON'u üret
 python -m motor_nx.cli blueprint -o blueprint.json
 
-# Geometri matematiği testleri
+# İmalat: malzeme listesi (BOM) + GD&T tolerans şeması
+python -m motor_nx.cli bom --csv bom.csv
+python -m motor_nx.cli tolerances --csv tol.csv
+
+# FEA hand-off paketi (spec + DXF + sargı haritası)
+python -m motor_nx.cli fea -o fea/
+
+# Geometri + imalat matematiği testleri
 python tests/test_blueprint.py
+python tests/test_manufacturing.py
 ```
 
 Özel bir tasarım için kısmi bir `MotorParams` JSON'u verin:
@@ -110,5 +120,10 @@ Tüm tasarım [motor_nx/params.py](motor_nx/params.py)'deki dataclass'lardan gel
 `em_design.validate()` her build'den önce geometrik olarak imkânsız kombinasyonları
 (negatif kalınlık, kutbu aşan mıknatıs, sığmayan iletken, …) yakalar.
 
-Tasarım gerekçesi ve parametre tablosu için [docs/DESIGN.md](docs/DESIGN.md);
-NXOpen otomasyon ayrıntıları için [docs/NX_AUTOMATION.md](docs/NX_AUTOMATION.md).
+Belgeler:
+
+- [docs/DESIGN.md](docs/DESIGN.md) — tasarım gerekçesi + parametre tablosu
+- [docs/NX_AUTOMATION.md](docs/NX_AUTOMATION.md) — NXOpen otomasyon (NX 2506) referansı
+- [docs/MANUFACTURING.md](docs/MANUFACTURING.md) — BOM + GD&T toleranslar + imalat süreci
+- [docs/FEA_PREP.md](docs/FEA_PREP.md) — FEA doğrulama planı + kabul kriterleri
+- [PROJECT_MEMORY/](PROJECT_MEMORY/) — proje ilerleme günlüğü

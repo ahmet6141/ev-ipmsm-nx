@@ -1,11 +1,16 @@
-"""NX-independent command line: inspect a design and emit its blueprint JSON.
+"""NX-independent command line: inspect a design, emit its blueprint, and produce
+manufacturing/FEA hand-off data -- all without Siemens NX.
 
-    python -m motor_nx.cli report     [config.json]
-    python -m motor_nx.cli validate   [config.json]
-    python -m motor_nx.cli blueprint  [config.json] [-o blueprint.json]
+    python -m motor_nx.cli report      [config.json]              design + performance
+    python -m motor_nx.cli validate    [config.json]              buildability (exit code)
+    python -m motor_nx.cli blueprint   [config.json] [-o b.json]  geometry build steps
+    python -m motor_nx.cli preview      [config.json] [-o p.svg]  SVG cross-section
+    python -m motor_nx.cli fea          [config.json] [-o fea/]   FEA hand-off package
+    python -m motor_nx.cli bom          [config.json] [--csv b.csv]  Bill of Materials
+    python -m motor_nx.cli tolerances   [config.json] [--csv t.csv]  GD&T scheme
 
 `config.json` is a (possibly partial) MotorParams dict; omit it for the default
-EV traction variant. The emitted blueprint.json is the exact input the NX builder
+EV traction variant. The blueprint JSON is the exact input the NX builder
 (run_journal nx_builder.py) consumes.
 """
 
@@ -42,6 +47,14 @@ def main(argv=None):
     p_fea = sub.add_parser("fea", help="write the FEA hand-off package (spec JSON + DXF + winding map)")
     p_fea.add_argument("config", nargs="?")
     p_fea.add_argument("-o", "--out", default="fea")
+
+    p_bom = sub.add_parser("bom", help="geometry-derived Bill of Materials (mass + count)")
+    p_bom.add_argument("config", nargs="?")
+    p_bom.add_argument("--csv", help="also write the BOM to this CSV path")
+
+    p_tol = sub.add_parser("tolerances", help="critical-dimension / GD&T scheme")
+    p_tol.add_argument("config", nargs="?")
+    p_tol.add_argument("--csv", help="also write the tolerance table to this CSV path")
 
     args = parser.parse_args(argv)
     params = _load_params(args.config)
@@ -85,6 +98,37 @@ def main(argv=None):
         print("wrote FEA hand-off package:")
         for path in written:
             print("  ", path)
+        return 0
+
+    if args.cmd == "bom":
+        from . import manufacturing as mfg
+        print(mfg.bom_report(params))
+        if args.csv:
+            import csv
+            bom = mfg.bill_of_materials(params)
+            with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+                wr = csv.writer(fh)
+                wr.writerow(["component", "material", "qty", "mass_kg", "note"])
+                for it in bom["line_items"]:
+                    wr.writerow([it["component"], it["material"], it["qty"],
+                                 it["mass_kg"], it.get("note", "")])
+                wr.writerow([])
+                wr.writerow(["TOTAL", "", "", bom["total_mass_kg"], "modelled mass"])
+            print("\nwrote %s" % args.csv)
+        return 0
+
+    if args.cmd == "tolerances":
+        from . import manufacturing as mfg
+        print(mfg.tolerance_report(params))
+        if args.csv:
+            import csv
+            with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+                wr = csv.writer(fh)
+                wr.writerow(["feature", "nominal", "datum", "tolerance", "gdt", "rationale"])
+                for t in mfg.TOLERANCES(params):
+                    wr.writerow([t["feature"], t["nominal"], t.get("datum", ""),
+                                 t["tolerance"], t["gdt"], t["rationale"]])
+            print("\nwrote %s" % args.csv)
         return 0
 
     return 0
