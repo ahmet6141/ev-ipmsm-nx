@@ -44,6 +44,8 @@ class WindingParams:
     phases: int = 3
     conductors_per_slot: int = 8        # hairpin bars stacked radially in each slot
     parallel_paths: int = 2
+    coil_span_slots: int = 0            # coil pitch in slots; 0 => full pitch (slots/pole). A
+    #                                     shorter span chords the winding (kp<1, lower harmonics)
     bar_clearance: float = 0.45         # gap (slot wall <-> bar): insulation + tolerance
     bar_corner_radius: float = 0.8      # rounded corner of a rectangular hairpin bar
     model_endwindings: bool = True      # add a simplified end-winding ENVELOPE ring at each stack end

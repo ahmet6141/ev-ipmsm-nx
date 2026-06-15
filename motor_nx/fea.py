@@ -166,12 +166,6 @@ _LAYER = {
 }
 
 
-def _rotate(points, ang_deg):
-    a = math.radians(ang_deg)
-    c, s = math.cos(a), math.sin(a)
-    return [(x * c - y * s, x * s + y * c) for x, y in points]
-
-
 def _dxf_polyline(layer: str, pts) -> List[str]:
     out = ["0", "LWPOLYLINE", "8", layer, "90", str(len(pts)), "70", "1"]
     for x, y in pts:
@@ -184,34 +178,15 @@ def _dxf_circle(layer: str, cx: float, cy: float, rad: float) -> List[str]:
 
 
 def to_dxf(blueprint: Dict[str, Any]) -> str:
-    """Project the build steps onto the XY lamination plane as a DXF. End-windings
-    (axially outside the cross-section) are skipped."""
+    """Project the build steps onto the XY lamination plane as a DXF, one layer
+    per material. Uses the shared blueprint.iter_cross_section projection."""
     body = []
-    for st in blueprint["build_steps"]:
-        role = st.get("role", "")
-        if role == "end_winding":
-            continue
+    for role, shape in _bp.iter_cross_section(blueprint):
         layer = _LAYER.get(role, "MISC")
-        kind = st["kind"]
-        count = max(1, st.get("pattern_count", 1))
-        ang = st.get("pattern_angle_deg", 0.0)
-        if kind == "tube":
-            body += _dxf_circle(layer, 0.0, 0.0, st["outer_radius"])
-            body += _dxf_circle(layer, 0.0, 0.0, st["inner_radius"])
-        elif kind == "cylinder":
-            for i in range(count):
-                cx, cy = _rotate([(st.get("cx", 0.0), st.get("cy", 0.0))], i * ang)[0]
-                body += _dxf_circle(layer, cx, cy, st["outer_radius"])
-        elif kind == "extrude" and st.get("profile"):
-            base = [(pt[0], pt[1]) for pt in st["profile"]]
-            for i in range(count):
-                body += _dxf_polyline(layer, _rotate(base, i * ang))
-        elif kind == "revolve" and st.get("profile"):
-            rs = [pt[0] for pt in st["profile"]]
-            if rs:
-                body += _dxf_circle(layer, 0.0, 0.0, max(rs))
-                if min(rs) > 1e-6:
-                    body += _dxf_circle(layer, 0.0, 0.0, min(rs))
+        if shape[0] == "circle":
+            body += _dxf_circle(layer, shape[1], shape[2], shape[3])
+        else:  # polygon
+            body += _dxf_polyline(layer, shape[1])
     return "\n".join(["0", "SECTION", "2", "ENTITIES"] + body + ["0", "ENDSEC", "0", "EOF"]) + "\n"
 
 

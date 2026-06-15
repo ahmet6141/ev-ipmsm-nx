@@ -243,37 +243,12 @@ def _svg_entity(e, tx, scale) -> str:
 # --------------------------------------------------------------------------- #
 # cross-section geometry (projected build steps, like preview/fea)
 # --------------------------------------------------------------------------- #
-def _rotate(pts, deg):
-    a = math.radians(deg); c, s = math.cos(a), math.sin(a)
-    return [(x * c - y * s, x * s + y * c) for x, y in pts]
-
-
 def _draw_cross_section(d: Drawing, bp: Dict[str, Any], roles: Optional[set] = None):
-    for st in bp["build_steps"]:
-        role = st.get("role", "")
-        if role == "end_winding":
-            continue
-        if roles is not None and role not in roles:
-            continue
-        kind = st["kind"]
-        count = max(1, st.get("pattern_count", 1))
-        ang = st.get("pattern_angle_deg", 0.0)
-        if kind == "tube":
-            d.circle(0, 0, st["outer_radius"]); d.circle(0, 0, st["inner_radius"])
-        elif kind == "cylinder":
-            for i in range(count):
-                cx, cy = _rotate([(st.get("cx", 0.0), st.get("cy", 0.0))], i * ang)[0]
-                d.circle(cx, cy, st["outer_radius"])
-        elif kind == "extrude" and st.get("profile"):
-            base = [(p[0], p[1]) for p in st["profile"]]
-            for i in range(count):
-                d.polyline(_rotate(base, i * ang))
-        elif kind == "revolve" and st.get("profile"):
-            rs = [p[0] for p in st["profile"]]
-            if rs:
-                d.circle(0, 0, max(rs))
-                if min(rs) > 1e-6:
-                    d.circle(0, 0, min(rs))
+    for role, shape in _bp.iter_cross_section(bp, roles):
+        if shape[0] == "circle":
+            d.circle(shape[1], shape[2], shape[3])
+        else:  # polygon
+            d.polyline(shape[1])
 
 
 def _title_block(d: Drawing, x: float, y: float, w: float, rows: List[Tuple[str, str]]):

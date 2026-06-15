@@ -218,11 +218,14 @@ def _v_magnet_axes(v_angle_deg: float) -> Tuple[Point, Point]:
 
 
 def _v_inner_end_center(p: MotorParams, g: em_design.DerivedGeometry) -> Point:
-    """Centre of the inner (vertex-side) end face of the +Y magnet."""
+    """Centre of the inner (vertex-side) end face of the +Y magnet, placed on the
+    apex circle of radius (shaft + vertex_gap) at tangential offset y. If that
+    circle is smaller than the offset (degenerate: vertex_gap too small -- caught
+    by em_design.validate), x collapses to 0 rather than a hidden fudge value."""
     r = p.rotor
     y = r.center_post_halfwidth + r.magnet_thickness / 2.0
     r_anchor = g.shaft_radius + r.vertex_gap
-    x = math.sqrt(max(r_anchor ** 2 - y ** 2, r_anchor ** 2 * 0.0 + 1.0))
+    x = math.sqrt(max(r_anchor ** 2 - y ** 2, 0.0))
     return (x, y)
 
 
@@ -484,6 +487,39 @@ def expand_step_instances(step: BuildStep) -> List[Dict[str, Any]]:
             inst["cx"], inst["cy"] = cx, cy
         out.append(inst)
     return out
+
+
+def iter_cross_section(blueprint: Dict[str, Any], roles: Optional[set] = None):
+    """Project the build steps onto the XY lamination plane, patterns expanded,
+    end-windings (axially outside the section) skipped. Yields (role, shape) where
+    shape is ("circle", cx, cy, r) or ("polygon", [(x, y), ...]).
+
+    The single source of truth for the 2D section, shared by preview.py,
+    fea.to_dxf and drawings.py (previously copy-pasted in all three)."""
+    for st in blueprint["build_steps"]:
+        role = st.get("role", "")
+        if role == "end_winding" or (roles is not None and role not in roles):
+            continue
+        kind = st["kind"]
+        count = max(1, st.get("pattern_count", 1))
+        ang = st.get("pattern_angle_deg", 0.0)
+        if kind == "tube":
+            yield role, ("circle", 0.0, 0.0, st["outer_radius"])
+            yield role, ("circle", 0.0, 0.0, st["inner_radius"])
+        elif kind == "cylinder":
+            for i in range(count):
+                cx, cy = _rotate([(st.get("cx", 0.0), st.get("cy", 0.0))], i * ang)[0]
+                yield role, ("circle", cx, cy, st["outer_radius"])
+        elif kind == "extrude" and st.get("profile"):
+            base = [(pt[0], pt[1]) for pt in st["profile"]]
+            for i in range(count):
+                yield role, ("polygon", _rotate(base, i * ang))
+        elif kind == "revolve" and st.get("profile"):
+            rs = [pt[0] for pt in st["profile"]]
+            if rs:
+                yield role, ("circle", 0.0, 0.0, max(rs))
+                if min(rs) > 1e-6:
+                    yield role, ("circle", 0.0, 0.0, min(rs))
 
 
 # --------------------------------------------------------------------------- #

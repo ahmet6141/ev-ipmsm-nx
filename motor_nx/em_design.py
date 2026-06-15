@@ -87,7 +87,9 @@ def derive(p: MotorParams) -> DerivedGeometry:
     else:
         kd = math.sin(n * gamma / 2.0) / (n * math.sin(gamma / 2.0))
     full_pitch_slots = s.slot_count // r.pole_count
-    coil_pitch_slots = full_pitch_slots                          # full-pitch assumption
+    # coil_span_slots == 0 => full pitch; a shorter span chords the winding (kp<1).
+    span = getattr(w, "coil_span_slots", 0) or full_pitch_slots
+    coil_pitch_slots = max(1, min(int(span), full_pitch_slots))
     kp = math.sin(math.radians(coil_pitch_slots / full_pitch_slots * 90.0))
     kw = abs(kd * kp)
 
