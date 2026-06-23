@@ -78,6 +78,11 @@ class BuildStep:
     # placed in the half-plane at `start_angle_deg` about Z (default = full 360 at +X)
     angle_deg: float = 360.0
     start_angle_deg: float = 0.0
+    # kind="hole": a cylindrical hole on an ARBITRARY axis (radial ports, oil cross-
+    # holes, ...). base point = (cx, cy, z0), direction = `axis` (need not be +Z),
+    # radius = outer_radius, depth = length. A circular `pattern` (count/angle about
+    # Z) rotates BOTH the base point and the axis. (tube/cylinder/extrude stay +Z.)
+    axis: Tuple[float, float, float] = (0.0, 0.0, 1.0)
 
     def as_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -282,7 +287,10 @@ def conductor_polygons(p: MotorParams, g: em_design.DerivedGeometry) -> List[Lis
 
 
 def shaft_profile(p: MotorParams, g: em_design.DerivedGeometry) -> List[Point]:
-    """Closed (r, z) profile of a stepped shaft, revolved 360 deg about Z."""
+    """Closed (r, z) profile of a stepped shaft, revolved 360 deg about Z.
+
+    DE (+Z) order inside->out: main journal -> bearing seat -> optional OUTPUT STUB
+    (a reduced-diameter extension past the bearing that carries the drive key)."""
     sh = p.shaft
     r_main = sh.diameter / 2.0
     r_brg = sh.bearing_seat_diameter / 2.0
@@ -298,8 +306,13 @@ def shaft_profile(p: MotorParams, g: em_design.DerivedGeometry) -> List[Point]:
         (r_brg, z_r - seat),
         (r_brg, z_r),
     ]
+    z_end = z_r
+    if sh.drive_stub_length > 0 and 0 < sh.drive_stub_diameter < sh.bearing_seat_diameter:
+        r_stub = sh.drive_stub_diameter / 2.0
+        outer += [(r_stub, z_r), (r_stub, z_r + sh.drive_stub_length)]
+        z_end = z_r + sh.drive_stub_length
     # close the loop down the (hollow or solid) axis side
-    return outer + [(r_axis, z_r), (r_axis, z_l)]
+    return outer + [(r_axis, z_end), (r_axis, z_l)]
 
 
 # --------------------------------------------------------------------------- #
@@ -485,6 +498,232 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
             pattern_count=c.channel_count, pattern_angle_deg=360.0 / c.channel_count,
         ))
 
+    # 10) manufacturing / assembly features (fastening holes, keyways, mounting
+    #     flanges, coolant ports, terminal, lifting eye) -- the production details
+    #     a real, assemblable part needs on top of the EM-active solid.
+    steps.extend(assembly_steps(p, g, jacket_inner, jacket_outer, end_margin))
+
+    return steps
+
+
+# --------------------------------------------------------------------------- #
+# manufacturing / assembly features (holes, keyways, flange, ports, ...)
+# --------------------------------------------------------------------------- #
+def _radial_hole(step_id: str, role: str, body_name: str, target: str,
+                 angle_deg: float, z: float, from_radius: float,
+                 radius: float, depth: float, color, pattern_count: int = 1) -> BuildStep:
+    """A cylindrical hole drilled RADIALLY inward, starting on the cylinder of
+    `from_radius` at `angle_deg` and pointing toward the Z axis for `depth` mm.
+    (A circular pattern rotates the base point AND the inward axis about Z.)"""
+    a = math.radians(angle_deg)
+    cx, cy = from_radius * math.cos(a), from_radius * math.sin(a)
+    return BuildStep(
+        id=step_id, role=role, kind="hole", boolean="subtract", target=target,
+        body_name=body_name, material="air", color=color,
+        outer_radius=radius, cx=cx, cy=cy, z0=z, length=depth,
+        axis=(-math.cos(a), -math.sin(a), 0.0),
+        pattern_count=pattern_count, pattern_angle_deg=360.0 / max(1, pattern_count),
+    )
+
+
+def assembly_steps(p: MotorParams, g: em_design.DerivedGeometry,
+                   jacket_inner: float, jacket_outer: float, end_margin: float) -> List[BuildStep]:
+    """All manufacturing / assembly hole + feature cuts (and the mounting flange).
+    Every feature is independently toggleable (count/size 0 => skipped) so a pure
+    EM solid is produced by `assembly.enabled = False`. em_design.validate() has
+    already geometrically vetted every feature placed here."""
+    a = p.assembly
+    if not a.enabled:
+        return []
+    s, r, sh, c = p.stator, p.rotor, p.shaft, p.cooling
+    steps: List[BuildStep] = []
+    L = p.stack_length
+
+    # ---- STATOR: axial tie-rod / clamping holes in the yoke (back-iron) ----- #
+    if a.stator_tie_rod_count > 0 and a.stator_tie_rod_diameter > 0:
+        pr = a.stator_tie_rod_pitch_radius or 0.5 * (g.slot_body_outer_radius + g.stator_outer_radius)
+        steps.append(BuildStep(
+            id="stator_tie_rod", role="stator_tie_rod_cut", kind="cylinder",
+            boolean="subtract", target="stator_steel", body_name="Stator_TieRod_Hole",
+            material="air", color=COL_STEEL, outer_radius=a.stator_tie_rod_diameter / 2.0,
+            cx=pr, cy=0.0, z0=0.0, length=L, drive_with_stack=True,
+            pattern_count=a.stator_tie_rod_count, pattern_angle_deg=360.0 / a.stator_tie_rod_count,
+        ))
+    # ---- STATOR: anti-rotation key-notches on the OD ------------------------ #
+    if a.stator_key_count > 0 and a.stator_key_width > 0 and a.stator_key_depth > 0:
+        Rod = g.stator_outer_radius
+        hw = a.stator_key_width / 2.0
+        notch = [(Rod - a.stator_key_depth, -hw), (Rod + 0.5, -hw),
+                 (Rod + 0.5, hw), (Rod - a.stator_key_depth, hw)]
+        steps.append(BuildStep(
+            id="stator_key", role="stator_key_cut", kind="extrude",
+            boolean="subtract", target="stator_steel", body_name="Stator_OD_Key",
+            material="air", color=COL_STEEL, profile=notch, z0=0.0, length=L,
+            drive_with_stack=True, pattern_count=a.stator_key_count,
+            pattern_angle_deg=360.0 / a.stator_key_count,
+        ))
+
+    # ---- ROTOR: axial rivet / end-plate-retention holes in the hub ---------- #
+    if a.rotor_rivet_count > 0 and a.rotor_rivet_diameter > 0:
+        pr = a.rotor_rivet_pitch_radius or (g.shaft_radius + 0.45 * r.vertex_gap)
+        steps.append(BuildStep(
+            id="rotor_rivet", role="rotor_rivet_cut", kind="cylinder",
+            boolean="subtract", target="rotor_steel", body_name="Rotor_Rivet_Hole",
+            material="air", color=COL_ROTOR, outer_radius=a.rotor_rivet_diameter / 2.0,
+            cx=pr, cy=0.0, z0=0.0, length=L, drive_with_stack=True,
+            pattern_count=a.rotor_rivet_count, pattern_angle_deg=360.0 / a.rotor_rivet_count,
+        ))
+    # ---- ROTOR: optional bore keyway (default OFF -> press/shrink fit) ------- #
+    if a.rotor_keyway_width > 0 and a.rotor_keyway_depth > 0:
+        rb = g.shaft_radius
+        hw = a.rotor_keyway_width / 2.0
+        key = [(rb - 0.5, -hw), (rb + a.rotor_keyway_depth, -hw),
+               (rb + a.rotor_keyway_depth, hw), (rb - 0.5, hw)]
+        steps.append(BuildStep(
+            id="rotor_keyway", role="rotor_keyway_cut", kind="extrude",
+            boolean="subtract", target="rotor_steel", body_name="Rotor_Bore_Keyway",
+            material="air", color=COL_ROTOR, profile=key, z0=0.0, length=L, drive_with_stack=True,
+        ))
+
+    # ---- SHAFT: drive-end keyway (DIN 6885-A) ------------------------------- #
+    z_r = L + sh.overhang                       # bearing-seat (+Z) end of the shaft
+    r_brg = sh.bearing_seat_diameter / 2.0
+    r_main = sh.diameter / 2.0
+    has_stub = sh.drive_stub_length > 0 and 0 < sh.drive_stub_diameter < sh.bearing_seat_diameter
+    if a.shaft_keyway_width > 0 and a.shaft_keyway_depth > 0 and a.shaft_keyway_length > 0:
+        # Put the keyway on the OUTPUT STUB when present (the correct place); else on
+        # the DE bearing seat, clamped to the seat length so it never crosses the
+        # journal->main-diameter step (which would leave a messy sub-surface slot).
+        if has_stub:
+            r_surf = sh.drive_stub_diameter / 2.0
+            kl = min(a.shaft_keyway_length, sh.drive_stub_length)
+            zk0 = z_r + (sh.drive_stub_length - kl)   # keyway ends at the stub tip
+        else:
+            r_surf = r_brg
+            kl = min(a.shaft_keyway_length, sh.bearing_seat_length)
+            zk0 = z_r - kl
+        hw = a.shaft_keyway_width / 2.0
+        key = [(r_surf - a.shaft_keyway_depth, -hw), (r_surf + 0.5, -hw),
+               (r_surf + 0.5, hw), (r_surf - a.shaft_keyway_depth, hw)]
+        steps.append(BuildStep(
+            id="shaft_keyway", role="shaft_keyway_cut", kind="extrude",
+            boolean="subtract", target="shaft", body_name="Shaft_DE_Keyway",
+            material="air", color=COL_SHAFT, profile=key,
+            z0=zk0, length=kl,
+        ))
+    # ---- SHAFT: retaining-ring (DIN 471) groove inboard of the DE seat ------ #
+    if a.shaft_snap_ring_width > 0 and a.shaft_snap_ring_depth > 0:
+        z_groove = z_r - sh.bearing_seat_length - a.shaft_snap_ring_width
+        groove = [(r_main - a.shaft_snap_ring_depth, z_groove),
+                  (r_main + 0.5, z_groove),
+                  (r_main + 0.5, z_groove + a.shaft_snap_ring_width),
+                  (r_main - a.shaft_snap_ring_depth, z_groove + a.shaft_snap_ring_width)]
+        steps.append(BuildStep(
+            id="shaft_snap_groove", role="shaft_groove_cut", kind="revolve",
+            boolean="subtract", target="shaft", body_name="Shaft_RetainingRing_Groove",
+            material="air", color=COL_SHAFT, profile=groove,
+        ))
+    # ---- SHAFT: radial oil cross-holes (hollow-shaft rotor cooling) --------- #
+    if sh.bore_diameter > 0 and a.shaft_oil_hole_count > 0 and a.shaft_oil_hole_diameter > 0:
+        depth = r_main - sh.bore_diameter / 2.0 + 1.0   # surface -> bore
+        steps.append(_radial_hole(
+            "shaft_oil_hole", "shaft_oil_cut", "Shaft_Oil_Hole", "shaft",
+            angle_deg=0.0, z=L / 2.0, from_radius=r_main + 0.5,
+            radius=a.shaft_oil_hole_diameter / 2.0, depth=depth, color=COL_SHAFT,
+            pattern_count=a.shaft_oil_hole_count))
+
+    # ---- HOUSING: mounting flanges at BOTH ends (unite a disk, reopen bore) - #
+    z_de = L + end_margin                       # +Z (drive-end) housing face
+    z_nde = -end_margin                         # -Z (non-drive-end) housing face
+    flange_outer = jacket_outer + a.housing_flange_od_margin
+    if a.housing_flange_thickness > 0 and a.housing_flange_od_margin > 0:
+        for end, z0 in (("de", z_de - a.housing_flange_thickness), ("nde", z_nde)):
+            steps.append(BuildStep(
+                id="housing_flange_%s_disk" % end, role="housing", kind="cylinder",
+                boolean="unite", target="housing", body_name="Housing_Flange_%s" % end.upper(),
+                material="aluminium", color=COL_HOUSING, outer_radius=flange_outer,
+                cx=0.0, cy=0.0, z0=z0, length=a.housing_flange_thickness))
+            steps.append(BuildStep(
+                id="housing_flange_%s_bore" % end, role="housing", kind="cylinder",
+                boolean="subtract", target="housing", body_name="Housing_Flange_Bore_%s" % end.upper(),
+                material="air", color=COL_HOUSING, outer_radius=jacket_inner,
+                cx=0.0, cy=0.0, z0=z0 - 0.5, length=a.housing_flange_thickness + 1.0))
+        # end-shield / bearing-cap bolt circle in BOTH flange lips (through)
+        if a.housing_endshield_bolt_count > 0 and a.housing_endshield_bolt_diameter > 0:
+            pr = jacket_outer + 0.30 * a.housing_flange_od_margin
+            for end, z0 in (("de", z_de - a.housing_flange_thickness), ("nde", z_nde)):
+                steps.append(BuildStep(
+                    id="housing_endshield_bolt_%s" % end, role="housing_bolt_cut", kind="cylinder",
+                    boolean="subtract", target="housing", body_name="EndShield_Bolt_%s" % end.upper(),
+                    material="air", color=COL_HOUSING,
+                    outer_radius=a.housing_endshield_bolt_diameter / 2.0, cx=pr, cy=0.0,
+                    z0=z0 - 0.5, length=a.housing_flange_thickness + 1.0,
+                    pattern_count=a.housing_endshield_bolt_count,
+                    pattern_angle_deg=360.0 / a.housing_endshield_bolt_count))
+        # gearbox-mounting bolt circle in the DE flange only (through)
+        if a.housing_mount_bolt_count > 0 and a.housing_mount_bolt_diameter > 0:
+            pr = jacket_outer + 0.72 * a.housing_flange_od_margin
+            steps.append(BuildStep(
+                id="housing_mount_bolt", role="housing_bolt_cut", kind="cylinder",
+                boolean="subtract", target="housing", body_name="Mount_Bolt_DE",
+                material="air", color=COL_HOUSING,
+                outer_radius=a.housing_mount_bolt_diameter / 2.0, cx=pr, cy=0.0,
+                z0=z_de - a.housing_flange_thickness - 0.5, length=a.housing_flange_thickness + 1.0,
+                pattern_count=a.housing_mount_bolt_count,
+                pattern_angle_deg=360.0 / a.housing_mount_bolt_count))
+
+    # ---- HOUSING: radial coolant inlet + outlet ports ----------------------- #
+    port_depth = c.jacket_thickness + 2.0
+    if a.housing_coolant_port_diameter > 0:
+        for sid, ang, z in (("housing_coolant_in", 80.0, z_nde + a.housing_flange_thickness + 8.0),
+                            ("housing_coolant_out", 100.0, z_de - a.housing_flange_thickness - 8.0)):
+            steps.append(_radial_hole(
+                sid, "housing_port_cut", "Coolant_Port", "housing",
+                angle_deg=ang, z=z, from_radius=jacket_outer + 1.0,
+                radius=a.housing_coolant_port_diameter / 2.0, depth=port_depth, color=COL_HOUSING))
+    # ---- HOUSING: radial power-terminal / cable lead-through (+ raised boss) - #
+    if a.housing_terminal_diameter > 0:
+        boss_h = max(0.0, a.housing_terminal_boss)
+        if boss_h > 0:
+            # a raised cast pad the terminal box / gland bolts to (radial protrusion)
+            steps.append(BuildStep(
+                id="housing_terminal_boss", role="housing", kind="hole", boolean="unite",
+                target="housing", body_name="Terminal_Boss", material="aluminium", color=COL_HOUSING,
+                outer_radius=a.housing_terminal_diameter / 2.0 + 8.0,
+                cx=jacket_outer, cy=0.0, z0=L / 2.0, length=boss_h, axis=(1.0, 0.0, 0.0)))
+        steps.append(_radial_hole(
+            "housing_terminal", "housing_terminal_cut", "Terminal_LeadThrough", "housing",
+            angle_deg=0.0, z=L / 2.0, from_radius=jacket_outer + boss_h + 1.0,
+            radius=a.housing_terminal_diameter / 2.0, depth=boss_h + port_depth, color=COL_HOUSING))
+    # ---- HOUSING: radial tapped lifting-eye hole on top --------------------- #
+    if a.housing_lifting_hole_diameter > 0:
+        steps.append(_radial_hole(
+            "housing_lifting", "housing_lifting_cut", "Lifting_Eye_Hole", "housing",
+            angle_deg=90.0, z=L / 2.0, from_radius=jacket_outer + 1.0,
+            radius=a.housing_lifting_hole_diameter / 2.0,
+            depth=c.jacket_thickness * 0.9, color=COL_HOUSING))
+
+    # ---- END-SHIELDS / bearing caps (DE + NDE) as separate cast parts ------- #
+    if a.endshield_enabled and a.endshield_thickness > 0 and a.housing_flange_thickness > 0:
+        r_bore = a.endshield_bearing_bore / 2.0
+        for end, z0 in (("de", z_de), ("nde", z_nde - a.endshield_thickness)):
+            steps.append(BuildStep(
+                id="endshield_%s" % end, role="endshield", kind="tube", boolean="create",
+                body_name="EndShield_%s" % end.upper(), material="aluminium", color=COL_HOUSING,
+                outer_radius=flange_outer, inner_radius=r_bore,
+                z0=z0, length=a.endshield_thickness))
+            # bolt holes through the end-shield, aligned to the housing end-shield circle
+            if a.housing_endshield_bolt_count > 0:
+                pr = jacket_outer + 0.30 * a.housing_flange_od_margin
+                steps.append(BuildStep(
+                    id="endshield_%s_bolt" % end, role="endshield_bolt_cut", kind="cylinder",
+                    boolean="subtract", target="endshield_%s" % end,
+                    body_name="EndShield_Bolt_%s" % end.upper(), material="air", color=COL_HOUSING,
+                    outer_radius=a.housing_endshield_bolt_diameter / 2.0, cx=pr, cy=0.0,
+                    z0=z0 - 0.5, length=a.endshield_thickness + 1.0,
+                    pattern_count=a.housing_endshield_bolt_count,
+                    pattern_angle_deg=360.0 / a.housing_endshield_bolt_count))
+
     return steps
 
 
@@ -499,9 +738,13 @@ def expand_step_instances(step: BuildStep) -> List[Dict[str, Any]]:
         inst: Dict[str, Any] = {"index": i, "angle_deg": ang}
         if step.profile is not None and step.kind == "extrude":
             inst["profile"] = _rotate(step.profile, ang)
-        if step.kind == "cylinder":
+        if step.kind in ("cylinder", "hole"):
             cx, cy = _rotate([(step.cx, step.cy)], ang)[0]
             inst["cx"], inst["cy"] = cx, cy
+        if step.kind == "hole":
+            ax, ay, az = step.axis
+            rx, ry = _rotate([(ax, ay)], ang)[0]
+            inst["axis"] = (rx, ry, az)
         out.append(inst)
     return out
 

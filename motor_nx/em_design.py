@@ -287,7 +287,178 @@ def validate(p: MotorParams) -> List[str]:
                 f"(< 2 mm min); reduce magnet_segments_axial or magnet_seg_gap_mm."
             )
 
+    # --- manufacturing / assembly features ------------------------------- #
+    issues.extend(_validate_assembly(p, g))
+
     return issues
+
+
+# minimum metal a fastening hole / keyway must leave to the nearest face (mm)
+ASSEMBLY_WALL_MIN = 1.5
+
+
+def _ring_fits(pitch_r: float, hole_d: float, count: int) -> bool:
+    """A circular pattern of `count` holes of diameter `hole_d` on `pitch_r` does
+    not let adjacent holes overlap (arc pitch > hole + min wall)."""
+    if count <= 1 or pitch_r <= 0:
+        return True
+    arc = TAU * pitch_r / count
+    return arc >= hole_d + ASSEMBLY_WALL_MIN
+
+
+def _validate_assembly(p: MotorParams, g: DerivedGeometry) -> List[str]:
+    """Geometric feasibility of every manufacturing / assembly feature -- so the NX
+    builder never attempts a cut that breaks through a wall, collides with the
+    magnets/slots/cooling channels, or puts a bolt circle off the flange. Each
+    feature is independent: a failing one can be zeroed without touching the rest."""
+    a = getattr(p, "assembly", None)
+    if a is None or not a.enabled:
+        return []
+    out: List[str] = []
+    s, r, sh, c = p.stator, p.rotor, p.shaft, p.cooling
+    w = ASSEMBLY_WALL_MIN
+
+    # ---- stator tie-rod holes (in the yoke / back-iron) ---- #
+    if a.stator_tie_rod_count > 0:
+        if a.stator_tie_rod_diameter <= 0:
+            out.append("assembly.stator_tie_rod_diameter must be > 0 when tie-rod count > 0.")
+        pr = a.stator_tie_rod_pitch_radius or 0.5 * (g.slot_body_outer_radius + g.stator_outer_radius)
+        hr = a.stator_tie_rod_diameter / 2.0
+        if pr - hr < g.slot_body_outer_radius + w:
+            out.append(
+                f"stator tie-rod holes (pitch r={pr:.1f}, d={a.stator_tie_rod_diameter}) break into the "
+                f"slot bottom (r2={g.slot_body_outer_radius:.1f}). Move them outward or shrink the hole.")
+        if pr + hr > g.stator_outer_radius - w:
+            out.append(
+                f"stator tie-rod holes reach r={pr + hr:.1f} mm but the stator OD is "
+                f"{g.stator_outer_radius:.1f} mm; less than {w} mm wall to the OD.")
+        if not _ring_fits(pr, a.stator_tie_rod_diameter, a.stator_tie_rod_count):
+            out.append(f"{a.stator_tie_rod_count} stator tie-rod holes overlap on pitch r={pr:.1f} mm.")
+
+    # ---- stator OD anti-rotation key-notches ---- #
+    if a.stator_key_count > 0:
+        if a.stator_key_depth >= s.back_iron_thickness - w:
+            out.append(
+                f"stator OD key depth {a.stator_key_depth} mm is too deep for the "
+                f"{s.back_iron_thickness} mm back-iron (reaches the slot bottom).")
+        if not _ring_fits(g.stator_outer_radius, a.stator_key_width, a.stator_key_count):
+            out.append(f"{a.stator_key_count} OD key-notches (w={a.stator_key_width}) overlap on the stator OD.")
+
+    # ---- rotor rivet / end-plate holes (in the hub steel) ---- #
+    if a.rotor_rivet_count > 0:
+        if a.rotor_rivet_diameter <= 0:
+            out.append("assembly.rotor_rivet_diameter must be > 0 when rivet count > 0.")
+        pr = a.rotor_rivet_pitch_radius or (g.shaft_radius + 0.45 * r.vertex_gap)
+        hr = a.rotor_rivet_diameter / 2.0
+        ext = _magnet_pocket_extent(p, g)
+        pocket_min = ext[1] if ext else g.rotor_outer_radius
+        if pr - hr < g.shaft_radius + ROTOR_INNER_WEB_MIN:
+            out.append(
+                f"rotor rivet holes (pitch r={pr:.1f}) leave < {ROTOR_INNER_WEB_MIN} mm web to the shaft "
+                f"(r={g.shaft_radius:.1f}). Move them outward or shrink the hole.")
+        if pr + hr > pocket_min - w:
+            out.append(
+                f"rotor rivet holes reach r={pr + hr:.1f} mm but the magnet pockets start at "
+                f"r={pocket_min:.1f} mm; they would clip a pocket. Reduce rivet pitch/diameter.")
+        if not _ring_fits(pr, a.rotor_rivet_diameter, a.rotor_rivet_count):
+            out.append(f"{a.rotor_rivet_count} rotor rivet holes overlap on pitch r={pr:.1f} mm.")
+
+    # ---- rotor bore keyway (optional) ---- #
+    if a.rotor_keyway_width > 0 and a.rotor_keyway_depth > 0:
+        ext = _magnet_pocket_extent(p, g)
+        pocket_min = ext[1] if ext else g.rotor_outer_radius
+        if g.shaft_radius + a.rotor_keyway_depth > pocket_min - w:
+            out.append(
+                f"rotor bore keyway depth {a.rotor_keyway_depth} mm reaches the magnet pockets "
+                f"(start r={pocket_min:.1f}); reduce the keyway depth.")
+
+    # ---- shaft output stub + drive-end keyway ---- #
+    r_brg = sh.bearing_seat_diameter / 2.0
+    has_stub = sh.drive_stub_length > 0 and sh.drive_stub_diameter > 0
+    if has_stub:
+        if sh.drive_stub_diameter >= sh.bearing_seat_diameter:
+            out.append(
+                f"shaft drive_stub_diameter ({sh.drive_stub_diameter}) must step DOWN from the "
+                f"{sh.bearing_seat_diameter} mm bearing seat (a larger/equal stub is not a shoulder).")
+        if sh.drive_stub_diameter / 2.0 <= sh.bore_diameter / 2.0 + w:
+            out.append(
+                f"shaft output stub ({sh.drive_stub_diameter} mm) leaves < {w} mm wall to the "
+                f"{sh.bore_diameter} mm bore.")
+    if a.shaft_keyway_width > 0 and a.shaft_keyway_depth > 0:
+        # the keyway sits on the stub (if present) else on the DE bearing seat
+        r_surf = sh.drive_stub_diameter / 2.0 if has_stub else r_brg
+        surf_len = sh.drive_stub_length if has_stub else sh.bearing_seat_length
+        where = "output stub" if has_stub else "bearing seat"
+        if r_surf - a.shaft_keyway_depth < sh.bore_diameter / 2.0 + w:
+            out.append(
+                f"shaft keyway depth {a.shaft_keyway_depth} mm leaves < {w} mm wall to the "
+                f"{sh.bore_diameter} mm bore on the {2 * r_surf:.0f} mm {where}.")
+        if a.shaft_keyway_width >= 2 * r_surf:
+            out.append(f"shaft keyway is wider than the {2 * r_surf:.0f} mm {where}.")
+        if not has_stub and a.shaft_keyway_length > sh.overhang:
+            out.append(
+                f"shaft keyway length {a.shaft_keyway_length} mm exceeds the {sh.overhang} mm DE "
+                f"overhang; add an output stub (shaft.drive_stub_length) or shorten the keyway.")
+
+    # ---- shaft retaining-ring groove ---- #
+    if a.shaft_snap_ring_width > 0 and a.shaft_snap_ring_depth > 0:
+        if sh.diameter / 2.0 - a.shaft_snap_ring_depth < sh.bore_diameter / 2.0 + w:
+            out.append(
+                f"shaft retaining-ring groove depth {a.shaft_snap_ring_depth} mm leaves < {w} mm wall "
+                f"to the shaft bore.")
+
+    # ---- shaft radial oil cross-holes ---- #
+    if a.shaft_oil_hole_count > 0:
+        if sh.bore_diameter <= 0:
+            out.append("shaft oil cross-holes need a hollow shaft (shaft.bore_diameter > 0).")
+        elif not _ring_fits(sh.diameter / 2.0, a.shaft_oil_hole_diameter, a.shaft_oil_hole_count):
+            out.append(f"{a.shaft_oil_hole_count} shaft oil holes overlap on the journal surface.")
+
+    # ---- housing mounting flanges + bolt circles ---- #
+    if a.housing_flange_thickness > 0 and a.housing_flange_od_margin > 0:
+        jacket_inner = g.stator_outer_radius + c.housing_gap
+        jacket_outer = jacket_inner + c.jacket_thickness
+        flange_outer = jacket_outer + a.housing_flange_od_margin
+        circles = []  # (name, pitch_r, diameter, count)
+        if a.housing_endshield_bolt_count > 0 and a.housing_endshield_bolt_diameter > 0:
+            circles.append(("end-shield", jacket_outer + 0.30 * a.housing_flange_od_margin,
+                            a.housing_endshield_bolt_diameter, a.housing_endshield_bolt_count))
+        if a.housing_mount_bolt_count > 0 and a.housing_mount_bolt_diameter > 0:
+            circles.append(("mounting", jacket_outer + 0.72 * a.housing_flange_od_margin,
+                            a.housing_mount_bolt_diameter, a.housing_mount_bolt_count))
+        for name, pr, dia, count in circles:
+            if pr - dia / 2.0 < jacket_outer + w:
+                out.append(f"housing {name} bolt circle (pitch r={pr:.1f}) sits inside the jacket OD wall.")
+            if pr + dia / 2.0 > flange_outer - w:
+                out.append(f"housing {name} bolt circle (pitch r={pr:.1f}, d={dia}) runs off the flange OD "
+                           f"(r={flange_outer:.1f}); widen housing_flange_od_margin.")
+            if not _ring_fits(pr, dia, count):
+                out.append(f"{count} housing {name} bolts overlap on pitch r={pr:.1f} mm.")
+        if len(circles) == 2:
+            (_, pr0, d0, _), (_, pr1, d1, _) = circles
+            if abs(pr1 - pr0) < (d0 + d1) / 2.0 + w:
+                out.append("housing end-shield and mounting bolt circles overlap; "
+                           "widen housing_flange_od_margin.")
+
+    # ---- housing radial ports / terminal / lifting eye ---- #
+    if a.housing_coolant_port_diameter < 0 or a.housing_terminal_diameter < 0 or a.housing_lifting_hole_diameter < 0:
+        out.append("housing port/terminal/lifting hole diameters must be >= 0.")
+
+    # ---- end-shields / bearing caps ---- #
+    if a.endshield_enabled and a.endshield_thickness > 0 and a.housing_flange_thickness > 0:
+        jacket_outer = g.stator_outer_radius + c.housing_gap + c.jacket_thickness
+        flange_outer = jacket_outer + a.housing_flange_od_margin
+        bore_r = a.endshield_bearing_bore / 2.0
+        if bore_r <= sh.bearing_seat_diameter / 2.0 + w:
+            out.append(
+                f"end-shield bearing bore ({a.endshield_bearing_bore} mm) must be larger than the "
+                f"{sh.bearing_seat_diameter} mm bearing seat (it seats the bearing OUTER ring).")
+        if bore_r >= flange_outer - w:
+            out.append(
+                f"end-shield bearing bore ({a.endshield_bearing_bore} mm) leaves no rim to the "
+                f"{2 * flange_outer:.0f} mm flange OD; reduce it or widen housing_flange_od_margin.")
+
+    return out
 
 
 def _magnet_pocket_extent(p: MotorParams, g: DerivedGeometry):

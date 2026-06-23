@@ -12,8 +12,17 @@ BOM ve tolerans tabloları modelden türetilir — parametre değişince güncel
 python -m motor_nx.cli bom                 # kütle + adet
 python -m motor_nx.cli bom --csv bom.csv
 python -m motor_nx.cli tolerances --csv tol.csv
+python -m motor_nx.cli hardware --csv hw.csv  # bağlantı-elemanı (donanım) listesi
 python -m motor_nx.cli drawings -o drawings/  # 2D resimler (DXF + SVG)
 ```
+
+> **Montaj / üretim özellikleri (yeni):** 3D model artık her parçada profesyonel
+> montaj deliklerini ve üretim detaylarını içerir (bağlama/tie-rod delikleri, dönmez
+> kama, rotor balans/perçin delikleri, şaft kama yuvası + segman kanalı + yağ
+> delikleri, gövde montaj flanşı + civata daireleri + soğutucu portları + terminal +
+> kaldırma deliği). Tümü parametrik (`AssemblyParams`), tek tek kapatılabilir ve
+> build'den önce doğrulanır. Tam katalog + parça-parça şartname:
+> [../project_details/](../project_details/). Bağlantı elemanları aşağıda **§1b**.
 
 ---
 
@@ -29,9 +38,16 @@ bloğu içerir ([motor_nx/drawings.py](../motor_nx/drawings.py)).
 
 | Sayfa | İçerik |
 |---|---|
-| 1 — Montaj | Tam kesit; Ø housing/stator/bore/rotor/şaft; hava aralığı + ceket notları; antet + BOM tablosu |
-| 2 — Stator | Lamine; OD/bore; oluk ağzı/genişlik/derinlik/diş/back-iron notları; imalat notları |
-| 3 — Rotor | Lamine + 6 V-kutup; rotor OD/şaft bore; mıknatıs W×t / V-açı / köprü / nervür; magnetizasyon + balans notları |
+| 1 — Montaj | Tam kesit; Ø housing/stator/bore/rotor/şaft **+ flanş OD**; hava aralığı + ceket; **montaj/uç-kalkan civata daireleri + soğutucu port** callout'ları; antet + BOM tablosu |
+| 2 — Stator | Lamine; OD/bore; oluk ağzı/genişlik/derinlik/diş/back-iron; **tie-rod halkası + OD kama** callout'ları; imalat notları |
+| 3 — Rotor | Lamine + 6 V-kutup; rotor OD/şaft bore; mıknatıs W×t / V-açı / köprü / nervür; **rivet/uç-plaka deliği** callout'u; magnetizasyon + balans notları |
+| 4 — Şaft | Boyuna kesit; journal/rulman yatağı/içi-boş bore + **çıkış stub'ı**; **stub kama yuvası (DIN 6885) + segman kanalı (DIN 471) + radyal yağ delikleri** callout'ları; tornalama notları |
+| 5 — Patlatılmış montaj | Bileşenler montaj sırasına göre yan yana yarı-kesit (NDE end-shield → gövde+stator → rotor+şaft → DE end-shield); montaj-yolu + sıra numaraları |
+
+> Çizimlerde artık **GD&T feature-control çerçeveleri + datum sembolleri** (A / B / A-B) var.
+> Tüm imalat paketini tek komutla al: `python -m motor_nx.cli package -o manufacturing/`
+> (BOM + donanım + tolerans CSV'leri + DFM Monte Carlo raporu + Markdown özet + 5 çizim).
+> Hava-aralığı eksantriklik DFM yetkinliği (Cpk): `python -m motor_nx.cli dfm`.
 
 > Bunlar **veri-temelli yardımcı resimlerdir** (ölçüler model parametrelerinden); resmi
 > imalat resim seti için NX Drafting'te antet/GD&T çerçevesi + tedarikçi onayı gerekir.
@@ -57,7 +73,18 @@ kesimler hedef gövdeden net'lenir, hacim×yoğunluk→kütle. Varsayılan tasar
 
 ¹ Uç-tur kütlesi *katı zarf* hacminden (üst-sınır); gerçek uç-turlar kısmen havadır.
 Aktif malzeme kütlesi ~39.6 kg; bakır 6.4 kg; NdFeB 1.4 kg. (Emprenye, bağlantı
-elemanları, sensörler, konektörler hariç.)
+elemanları, sensörler, konektörler hariç.) Montaj delikleri (tie-rod/rivet/kama/
+civata) lamine/şaft kütlesini hafifçe düşürür; gövde montaj flanşı ~1.7 kg Al ekler.
+
+### 1b. Bağlantı-elemanı / donanım listesi
+
+Montaj deliklerinin/journal'ların/civata dairelerinin kabul ettiği **tedarik
+parçaları** (`python -m motor_nx.cli hardware`): stator bağlama civatası (M6) + dönmez
+kama, rotor uç-plaka perçini, şaft kaması (DIN 6885-A 12×8), rulman segmanı (DIN 471),
+şanzıman montaj civatası (M10×8), uç-kalkan civatası (M6×16), soğutucu rakorları (×2),
+terminal/kablo glandı, kaldırma cıvatası (DIN 580 M10), rulmanlar (yalıtımlı/hibrit ×2),
+uç-kalkanlar (×2), keçeler (FKM/HNBR ×2), sıcaklık sensörü (×3), konum sensörü.
+Boyutlar parametre değişince güncellenir; standartlar ISO 4762 / DIN 6885 / DIN 471 / DIN 580.
 
 ### Tam BOM kalem listesi (üretim için)
 Lamine, mıknatıs, hairpin bar, şaft, gövde, rulman dışında üretimde gereken kalemler:

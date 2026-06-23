@@ -77,6 +77,8 @@ def _step_unit_volume(step: Dict[str, Any]) -> float:
         return _polygon_area(step["profile"]) * step["length"]
     if kind == "revolve":
         return _revolve_volume(step["profile"], step.get("angle_deg", 360.0))
+    if kind == "hole":  # radial / arbitrary-axis cylindrical hole: pi r^2 * depth
+        return math.pi * step["outer_radius"] ** 2 * step["length"]
     return 0.0
 
 
@@ -115,6 +117,7 @@ _GROUP = {
     "end_winding": ("Stator winding - end turns", False),
     "shaft": ("Shaft", False),
     "housing": ("Housing / cooling jacket", False),
+    "endshield": ("End-shield / bearing cap", False),
 }
 
 
@@ -131,7 +134,10 @@ def bill_of_materials(p: MotorParams) -> Dict[str, Any]:
             "component": name, "material": row["material"],
             "count": 0, "volume_mm3": 0.0, "laminated": lam,
         })
-        grp["count"] += row["count"]
+        # "unite" rows (e.g. the housing flanges) merge into one casting -- count
+        # their mass but not as a separate part.
+        if row["boolean"] == "create":
+            grp["count"] += row["count"]
         grp["volume_mm3"] += max(0.0, row["net_volume"])
 
     ew_fraction = _end_winding_copper_fraction(p, g)
@@ -272,7 +278,146 @@ def TOLERANCES(p: MotorParams) -> List[Dict[str, str]]:
          "tolerance": "ISO 21940-11 G2.5 max @ 18k rpm; DESIGN TARGET G1.0 (NVH)",
          "gdt": "correct at dedicated balance lands; resolution ~1 g-mm/plane",
          "rationale": "1x vibration / bearing life at ~150 m/s tip speed"},
-    ]
+    ] + _assembly_tolerances(p, g)
+
+
+def _assembly_tolerances(p: MotorParams, g) -> List[Dict[str, str]]:
+    """GD&T / fit callouts for the manufacturing-assembly features (mounting flange
+    register, bolt circles, shaft keyway + retaining groove, anti-rotation key).
+    Skipped when a feature is disabled so the scheme always matches the geometry."""
+    a = getattr(p, "assembly", None)
+    if a is None or not a.enabled:
+        return []
+    rows: List[Dict[str, str]] = []
+    if a.housing_flange_thickness > 0:
+        jacket_outer = g.stator_outer_radius + p.cooling.housing_gap + p.cooling.jacket_thickness
+        rows.append({
+            "feature": "Housing mounting-flange register (spigot)",
+            "nominal": "%.0f mm pilot" % (2 * jacket_outer), "datum": "C (housing register) / A",
+            "tolerance": "h7/H7 pilot fit to the gearbox; face square to A",
+            "gdt": "register-to-bore concentricity 0.05; flange-face perpendicularity 0.05 to A",
+            "rationale": "locates the whole motor to the transmission; sets shaft-to-input coaxiality"})
+        if a.housing_mount_bolt_count > 0:
+            rows.append({
+                "feature": "Flange / end-shield bolt-circle position",
+                "nominal": "%d + %d holes" % (a.housing_mount_bolt_count, a.housing_endshield_bolt_count),
+                "datum": "C", "tolerance": "true position 0.3 MMC; pitch-circle dia +/-0.2",
+                "gdt": "position 0.30 (M) to C|A", "rationale": "bolt pattern must mate the cover / gearbox"})
+    if a.shaft_keyway_width > 0:
+        rows.append({
+            "feature": "Drive-end shaft keyway (DIN 6885-A)",
+            "nominal": "%.0f mm wide" % a.shaft_keyway_width, "datum": "A-B",
+            "tolerance": "width N9 (-0/-0.036); depth t1 +0.2/0",
+            "gdt": "symmetry 0.02 to the shaft axis; parallelism 0.02",
+            "rationale": "even key bearing; off-centre key -> fretting + unbalance at 18k rpm"})
+    if a.shaft_snap_ring_width > 0:
+        rows.append({
+            "feature": "Shaft retaining-ring groove (DIN 471)",
+            "nominal": "depth %.1f mm" % a.shaft_snap_ring_depth, "datum": "A-B",
+            "tolerance": "groove dia per DIN 471 for %.0f mm shaft; width +0.14/0" % p.shaft.diameter,
+            "gdt": "groove-bottom runout 0.02 to A-B", "rationale": "axial bearing retention; sharp corners raise stress"})
+    if a.stator_key_count > 0:
+        rows.append({
+            "feature": "Stator OD anti-rotation key-notch",
+            "nominal": "%.0f mm wide" % a.stator_key_width, "datum": "A",
+            "tolerance": "width +0.05/0; angular position +/-0.2 deg",
+            "gdt": "notch profile 0.05; position 0.1 to A", "rationale": "reacts fault/short-circuit torque on the shrink fit"})
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# fastener / hardware schedule  (the procured items the assembly holes accept)
+# --------------------------------------------------------------------------- #
+# metric clearance-hole diameter (mm) -> nearest standard bolt thread (ISO 273 medium)
+_CLEARANCE_TO_THREAD = [(3.4, "M3"), (4.5, "M4"), (5.5, "M5"), (6.6, "M6"),
+                        (9.0, "M8"), (11.0, "M10"), (13.5, "M12"), (17.5, "M16")]
+
+
+def _thread_for_clearance(d: float) -> str:
+    """The bolt thread whose ISO 273 medium clearance hole is ~`d` mm."""
+    best = _CLEARANCE_TO_THREAD[0][1]
+    for hole, thread in _CLEARANCE_TO_THREAD:
+        if d >= hole - 0.4:
+            best = thread
+    return best
+
+
+def hardware_schedule(p: MotorParams) -> List[Dict[str, Any]]:
+    """The procured FASTENERS / hardware the assembly holes + features accept --
+    the production line items a real motor needs beyond the modelled solids. Counts
+    track the parametric features in :class:`motor_nx.params.AssemblyParams`.
+    Sizes follow the referenced standards (DIN 6885 keys, DIN 471 rings, ISO metric
+    bolts). Bearings / end-shields / seals are procured to the interfaces modelled
+    on the housing + shaft (bolt circles, journals, registers)."""
+    a = getattr(p, "assembly", None)
+    rows: List[Dict[str, Any]] = []
+
+    def add(item, std, size, qty, note=""):
+        rows.append({"item": item, "standard": std, "size": size, "qty": int(qty), "note": note})
+
+    if a is not None and a.enabled:
+        if a.stator_tie_rod_count > 0:
+            add("Stator clamping / tie rod", "ISO 4762 (or weld stud)",
+                _thread_for_clearance(a.stator_tie_rod_diameter), a.stator_tie_rod_count,
+                "axial through the yoke; clamp the bonded stack / locate in housing")
+        if a.stator_key_count > 0:
+            add("Stator anti-rotation key", "parallel key",
+                "%.0fx%.0f" % (a.stator_key_width, a.stator_key_depth), a.stator_key_count,
+                "engages a matching housing key-slot; reacts fault torque on the shrink fit")
+        if a.rotor_rivet_count > 0:
+            add("Rotor end-plate rivet / pin", "solid rivet / dowel",
+                "%.0f mm" % a.rotor_rivet_diameter, a.rotor_rivet_count,
+                "retains the rotor end-plates / aligns the stack during bonding")
+        if a.shaft_keyway_width > 0:
+            add("Drive-end shaft key", "DIN 6885-A",
+                "%.0fx%.0f" % (a.shaft_keyway_width, a.shaft_keyway_width * 0.66), 1,
+                "torque transfer to the output coupling / gear")
+        if a.shaft_snap_ring_width > 0:
+            add("Bearing retaining ring", "DIN 471",
+                "%.0f mm shaft" % p.shaft.diameter, 1, "axially locates the DE bearing inner ring")
+        if a.shaft_oil_hole_count > 0 and p.shaft.bore_diameter > 0:
+            add("Hollow-shaft oil jet (cross-hole)", "machined",
+                "%.0f mm" % a.shaft_oil_hole_diameter, a.shaft_oil_hole_count,
+                "rotor cooling oil from the shaft bore to the laminations")
+        if a.housing_flange_thickness > 0:
+            if a.housing_mount_bolt_count > 0:
+                add("Housing-to-gearbox mounting bolt", "ISO 4762",
+                    _thread_for_clearance(a.housing_mount_bolt_diameter), a.housing_mount_bolt_count,
+                    "DE flange to transmission housing")
+            if a.housing_endshield_bolt_count > 0:
+                add("End-shield / bearing-cap bolt", "ISO 4762",
+                    _thread_for_clearance(a.housing_endshield_bolt_diameter),
+                    2 * a.housing_endshield_bolt_count, "both ends (DE + NDE)")
+        if a.housing_coolant_port_diameter > 0:
+            add("Coolant port fitting (in/out)", "BSP/NPT or O-ring boss",
+                "%.0f mm bore" % a.housing_coolant_port_diameter, 2, "jacket inlet + outlet")
+        if a.housing_terminal_diameter > 0:
+            add("Power-terminal / cable gland", "cable gland / sealed boss",
+                "%.0f mm" % a.housing_terminal_diameter, 1, "3-phase lead exit; IP-sealed")
+        if a.housing_lifting_hole_diameter > 0:
+            add("Lifting eyebolt", "DIN 580",
+                _thread_for_clearance(a.housing_lifting_hole_diameter), 1, "handling / hoisting")
+
+    # procured assembly hardware the modelled interfaces mate to (not hole-driven)
+    add("Bearing (DE / NDE)", "ISO 15 deep-groove or angular",
+        "bore %.0f mm" % p.shaft.bearing_seat_diameter, 2,
+        "at least one insulated / hybrid-ceramic (PWM EDM-current)")
+    add("End-shield / bearing housing", "cast Al, machined", "to flange bolt circle", 2,
+        "carries the bearing bore concentric to the stator bore")
+    add("Radial shaft seal", "FKM/HNBR lip seal", "shaft %.0f mm" % p.shaft.bearing_seat_diameter, 2,
+        "DE + NDE; retains lubricant / excludes contamination")
+    add("Temperature sensor", "PT100 / NTC", "-", 3, "stator end-winding hot-spots")
+    add("Position sensor", "resolver / encoder", "-", 1, "rotor angle for FOC")
+    return rows
+
+
+def hardware_report(p: MotorParams) -> str:
+    lines = ["Fastener / hardware schedule -- %s" % p.name,
+             "  %-32s %-26s %-12s %4s" % ("item", "standard", "size", "qty")]
+    for h in hardware_schedule(p):
+        lines.append("  %-32s %-26s %-12s %4d" % (h["item"][:32], h["standard"][:26], h["size"][:12], h["qty"]))
+    lines.append("  (procured items; mate to the assembly holes / journals / bolt circles modelled on each part)")
+    return "\n".join(lines)
 
 
 def general_notes() -> List[str]:
@@ -298,6 +443,11 @@ def general_notes() -> List[str]:
         "MMC on slot & magnet-pocket position for bonus tolerance.",
         "End-of-line: 100% air-gap/eccentricity (back-EMF symmetry), cogging + no-load loss screen, "
         "and surge/hi-pot on the hairpin insulation.",
+        "Assembly features: the lamination tie-rod / rivet holes and OD anti-rotation key locate and clamp "
+        "the bonded stacks; the housing mounting flange (h7 pilot register + bolt circle), end-shield bolt "
+        "circles, coolant ports, terminal gland and lifting eye carry the standard interfaces; the shaft "
+        "DIN 6885 keyway + DIN 471 retaining groove transfer torque and locate the bearing. See `cli hardware` "
+        "for the fastener schedule and project_details/ for the per-part rationale.",
     ]
 
 
@@ -320,7 +470,8 @@ def bom_report(p: MotorParams) -> str:
         "  material cost (indicative) : $%.0f  (magnet share %.0f%%)"
         % (bom["material_cost_usd"], bom["magnet_cost_share_pct"]),
         "  (geometry-derived mass; cost is market-volatile $/kg, excludes "
-        "processing/labour/consumables, fasteners, sensors, connectors)",
+        "processing/labour/consumables)",
+        "  fasteners / bearings / seals / sensors: see `cli hardware` (hardware_schedule)",
     ]
     return "\n".join(lines)
 
@@ -348,6 +499,146 @@ def eccentricity_stackup(p: MotorParams) -> Dict[str, Any]:
         "rss_pass": rss <= budget + 1e-9,
         "worst_case_pass": worst_case <= budget + 1e-9,
     }
+
+
+def eccentricity_monte_carlo(p: MotorParams, n: int = 20000, seed: int = 12345) -> Dict[str, Any]:
+    """DFM Monte Carlo of the assembled air-gap eccentricity. Each runout/coaxiality
+    contributor is a radial VECTOR with a random phase and a half-normal magnitude
+    (3-sigma = its tolerance); the assembled eccentricity is their vector sum. Reports
+    the distribution + the fraction over the ~10%-of-gap budget + a one-sided process
+    capability Cpk = (budget - mean) / (3*sigma). Deterministic via `seed`.
+
+    This is the statistical counterpart of :func:`eccentricity_stackup` (which only
+    gives the RSS and worst-case sum): random phases rarely align, so the realistic
+    spread sits between RSS and worst-case -- the number a yield estimate needs."""
+    import random
+    st = eccentricity_stackup(p)
+    contributors = st["contributors_mm"]
+    budget = st["budget_mm"]
+    rng = random.Random(seed)
+    two_pi = 2.0 * math.pi
+    samples: List[float] = []
+    for _ in range(max(1, n)):
+        sx = sy = 0.0
+        for tol in contributors.values():
+            mag = abs(rng.gauss(0.0, tol / 3.0))     # 3-sigma == the tolerance
+            ang = rng.uniform(0.0, two_pi)
+            sx += mag * math.cos(ang)
+            sy += mag * math.sin(ang)
+        samples.append(math.hypot(sx, sy))
+    samples.sort()
+
+    def pct(q):
+        return samples[min(len(samples) - 1, int(q * len(samples)))]
+
+    mean = sum(samples) / len(samples)
+    var = sum((s - mean) ** 2 for s in samples) / len(samples)
+    sigma = math.sqrt(var)
+    over = sum(1 for s in samples if s > budget) / len(samples)
+    cpk = (budget - mean) / (3.0 * sigma) if sigma > 0 else float("inf")
+    return {
+        "trials": len(samples), "budget_mm": budget,
+        "mean_mm": round(mean, 4), "sigma_mm": round(sigma, 4),
+        "p50_mm": round(pct(0.50), 4), "p95_mm": round(pct(0.95), 4),
+        "p99_mm": round(pct(0.99), 4), "max_mm": round(samples[-1], 4),
+        "fraction_over_budget": round(over, 5),
+        "ppm_over_budget": int(round(over * 1e6)),
+        "cpk": round(cpk, 3),
+        "rss_mm": st["rss_mm"], "worst_case_mm": st["worst_case_sum_mm"],
+    }
+
+
+def dfm_report(p: MotorParams, n: int = 20000) -> str:
+    mc = eccentricity_monte_carlo(p, n)
+    verdict = "OK" if mc["cpk"] >= 1.33 else ("MARGINAL" if mc["cpk"] >= 1.0 else "LOW")
+    return "\n".join([
+        "DFM Monte Carlo -- assembled air-gap eccentricity -- %s" % p.name,
+        "  trials               : %d (half-normal runouts, random phase, vector sum)" % mc["trials"],
+        "  budget (<=10%% gap)    : %.3f mm" % mc["budget_mm"],
+        "  mean / sigma         : %.4f / %.4f mm" % (mc["mean_mm"], mc["sigma_mm"]),
+        "  p50 / p95 / p99 / max: %.4f / %.4f / %.4f / %.4f mm"
+        % (mc["p50_mm"], mc["p95_mm"], mc["p99_mm"], mc["max_mm"]),
+        "  over budget          : %.3f%%  (%d ppm)" % (100 * mc["fraction_over_budget"], mc["ppm_over_budget"]),
+        "  Cpk (one-sided)      : %.2f  [%s]  (target >= 1.33)" % (mc["cpk"], verdict),
+        "  (compare deterministic RSS %.3f / worst-case %.3f mm)" % (mc["rss_mm"], mc["worst_case_mm"]),
+    ])
+
+
+def manufacturing_summary_md(p: MotorParams) -> str:
+    """A single human-readable manufacturing hand-off summary (Markdown): BOM,
+    fastener schedule, key tolerances, DFM verdict and the assembly order."""
+    bom = bill_of_materials(p)
+    mc = eccentricity_monte_carlo(p, 5000)
+    L = ["# Manufacturing package -- %s" % p.name, "",
+         "Model-derived; regenerate with `python -m motor_nx.cli package`.", "",
+         "## Bill of materials (modelled mass)", "",
+         "| Component | Material | Qty | Mass [kg] |", "|---|---|---:|---:|"]
+    for it in bom["line_items"]:
+        L.append("| %s | %s | %d | %.3f |" % (it["component"], it["material"], it["qty"], it["mass_kg"]))
+    L += ["| **TOTAL** | | | **%.2f** |" % bom["total_mass_kg"], "",
+          "Active mass %.2f kg; magnet %.3f kg; copper %.3f kg; material cost ~$%.0f (magnet %.0f%%)."
+          % (bom["active_mass_kg"], bom["magnet_mass_kg"], bom["copper_mass_kg"],
+             bom["material_cost_usd"], bom["magnet_cost_share_pct"]), "",
+          "## Fastener / hardware schedule", "",
+          "| Item | Standard | Size | Qty |", "|---|---|---|---:|"]
+    for h in hardware_schedule(p):
+        L.append("| %s | %s | %s | %d |" % (h["item"], h["standard"], h["size"], h["qty"]))
+    L += ["", "## DFM -- assembled air-gap eccentricity (Monte Carlo)", "",
+          "Budget %.3f mm; mean %.4f, sigma %.4f, p99 %.4f, max %.4f mm; over budget %d ppm; **Cpk %.2f**."
+          % (mc["budget_mm"], mc["mean_mm"], mc["sigma_mm"], mc["p99_mm"], mc["max_mm"],
+             mc["ppm_over_budget"], mc["cpk"]), "",
+          "## Critical tolerances (GD&T)", "",
+          "| Feature | Nominal | Tolerance | Datum |", "|---|---|---|---|"]
+    for t in TOLERANCES(p):
+        L.append("| %s | %s | %s | %s |" % (t["feature"], t["nominal"],
+                                            t["tolerance"][:48], t.get("datum", "")))
+    L += ["", "## Process / assembly notes", ""]
+    L += ["- " + n for n in general_notes()]
+    L += ["", "See `docs/MANUFACTURING.md` (full process + 16-step assembly) and "
+          "`project_details/` (per-part spec + assembly-feature catalog)."]
+    return "\n".join(L)
+
+
+def write_manufacturing_package(p: MotorParams, out_dir: str = "manufacturing") -> List[str]:
+    """Write the complete manufacturing hand-off to one folder: BOM + hardware +
+    tolerances CSVs, the DFM report, the Markdown summary and all 2D drawings."""
+    import csv
+    import os
+    os.makedirs(out_dir, exist_ok=True)
+    written: List[str] = []
+
+    def _csv(name, header, rows):
+        path = os.path.join(out_dir, name)
+        with open(path, "w", newline="", encoding="utf-8") as fh:
+            wr = csv.writer(fh)
+            wr.writerow(header)
+            for r in rows:
+                wr.writerow(r)
+        written.append(path)
+
+    bom = bill_of_materials(p)
+    _csv("bom.csv", ["component", "material", "qty", "mass_kg", "cost_usd", "note"],
+         [[it["component"], it["material"], it["qty"], it["mass_kg"], it["cost_usd"], it.get("note", "")]
+          for it in bom["line_items"]])
+    _csv("hardware.csv", ["item", "standard", "size", "qty", "note"],
+         [[h["item"], h["standard"], h["size"], h["qty"], h["note"]] for h in hardware_schedule(p)])
+    _csv("tolerances.csv", ["feature", "nominal", "datum", "tolerance", "gdt", "rationale"],
+         [[t["feature"], t["nominal"], t.get("datum", ""), t["tolerance"], t["gdt"], t["rationale"]]
+          for t in TOLERANCES(p)])
+
+    dfm_path = os.path.join(out_dir, "dfm_eccentricity.txt")
+    with open(dfm_path, "w", encoding="utf-8") as fh:
+        fh.write(dfm_report(p) + "\n")
+    written.append(dfm_path)
+
+    summary_path = os.path.join(out_dir, "manufacturing_summary.md")
+    with open(summary_path, "w", encoding="utf-8") as fh:
+        fh.write(manufacturing_summary_md(p) + "\n")
+    written.append(summary_path)
+
+    from . import drawings as _dwg  # lazy: drawings imports manufacturing
+    written += _dwg.write_drawings(p, os.path.join(out_dir, "drawings"))
+    return written
 
 
 def tolerance_report(p: MotorParams) -> str:

@@ -93,6 +93,27 @@ class Drawing:
         self.line(-extent, 0, extent, 0, layer)
         self.line(0, -extent, 0, extent, layer)
 
+    # -- GD&T: feature-control frame + datum-feature symbol ---------------- #
+    def fcf(self, x, y, cells, h=_TXT):
+        """Feature-control frame: a row of boxed cells (e.g. ['CYL', '0.015', 'A'])
+        with its top-left at (x, y). The first cell is the geometric characteristic."""
+        cw = h * 3.4
+        hh = h * 1.9
+        for i, c in enumerate(cells):
+            x0 = x + i * cw
+            self.line(x0, y, x0 + cw, y, "DIM")
+            self.line(x0, y - hh, x0 + cw, y - hh, "DIM")
+            self.line(x0, y, x0, y - hh, "DIM")
+            self.text(x0 + cw / 2.0, y - hh / 2.0, str(c), h * 0.85, "TEXT", "mm")
+        self.line(x + len(cells) * cw, y, x + len(cells) * cw, y - hh, "DIM")
+
+    def datum(self, x, y, letter, h=_TXT):
+        """Datum-feature symbol: a boxed letter (the leader/triangle is implied)."""
+        s = h * 1.8
+        self.line(x, y, x + s, y, "DIM"); self.line(x, y - s, x + s, y - s, "DIM")
+        self.line(x, y, x, y - s, "DIM"); self.line(x + s, y, x + s, y - s, "DIM")
+        self.text(x + s / 2.0, y - s / 2.0, str(letter), h, "TEXT", "mm")
+
     # -- bounds ------------------------------------------------------------ #
     def bounds(self):
         xs, ys = [], []
@@ -292,14 +313,19 @@ def assembly_sheet(p: MotorParams, date: str = "-------") -> Drawing:
     g = em_design.derive(p)
     bp = _bp.generate(p)
     bom = _mfg.bill_of_materials(p)
+    a = p.assembly
     d = Drawing("assembly")
     _draw_cross_section(d, bp)
     R_house = g.stator_outer_radius + p.cooling.housing_gap + p.cooling.jacket_thickness
-    d.centerlines(R_house * 1.15)
+    flange_R = R_house + (a.housing_flange_od_margin if (a.enabled and a.housing_flange_thickness > 0) else 0.0)
+    R_ext = max(R_house, flange_R)
+    d.centerlines(R_ext * 1.15)
 
     # stacked diameter dimensions above the part
     R_rotor = g.rotor_outer_radius
-    y = R_house + 16
+    y = R_ext + 16
+    if flange_R > R_house:
+        d.dim_h(-flange_R, flange_R, y - 14, "%cFLANGE %.0f" % (0xD8, 2 * flange_R))
     d.dim_h(-R_house, R_house, y + 0,  "%cHOUSING %.1f" % (0xD8, 2 * R_house))
     d.dim_h(-g.stator_outer_radius, g.stator_outer_radius, y + 14, "%cSTATOR OD %.0f h6" % (0xD8, p.stator.outer_diameter))
     d.dim_h(-g.bore_radius, g.bore_radius, y + 28, "%cBORE %.0f H7" % (0xD8, p.stator.bore_diameter))
@@ -307,10 +333,30 @@ def assembly_sheet(p: MotorParams, date: str = "-------") -> Drawing:
     d.dim_h(-g.shaft_radius, g.shaft_radius, y + 56, "%cSHAFT %.0f" % (0xD8, p.shaft.diameter))
 
     # leader callouts
-    d.leader(g.bore_radius, 0, g.bore_radius + 40, -R_house * 0.35,
+    d.leader(g.bore_radius, 0, g.bore_radius + 40, -R_ext * 0.35,
              "AIR GAP %.2f (radial)" % p.rotor.air_gap)
-    d.leader(R_house * 0.71, R_house * 0.5, R_house + 12, R_house * 0.7,
+    d.leader(R_house * 0.71, R_house * 0.5, R_house + 12, R_ext * 0.7,
              "WATER JACKET t=%.0f" % p.cooling.jacket_thickness)
+    # assembly / mounting features on the flange
+    if a.enabled and a.housing_flange_thickness > 0:
+        jo = R_house
+        if a.housing_mount_bolt_count > 0:
+            pr = jo + 0.72 * a.housing_flange_od_margin
+            d.leader(0, pr, -flange_R - 8, flange_R * 0.55,
+                     "%dx MOUNT BOLT %c%.1f @ R%.0f" % (a.housing_mount_bolt_count, 0xD8, a.housing_mount_bolt_diameter, pr))
+        if a.housing_endshield_bolt_count > 0:
+            pr = jo + 0.30 * a.housing_flange_od_margin
+            d.leader(-pr * 0.7, pr * 0.7, -flange_R - 8, flange_R * 0.20,
+                     "%dx END-SHIELD BOLT %c%.1f @ R%.0f" % (a.housing_endshield_bolt_count, 0xD8, a.housing_endshield_bolt_diameter, pr))
+        if a.housing_coolant_port_diameter > 0:
+            d.leader(0, R_house, flange_R + 8, flange_R * 0.85,
+                     "COOLANT PORT %c%.0f (in/out)" % (0xD8, a.housing_coolant_port_diameter))
+    # end-shield (bearing cap) callout + datum/GD&T on the rotational axis
+    if a.enabled and a.endshield_enabled and a.housing_flange_thickness > 0:
+        d.leader(g.shaft_radius, -g.shaft_radius, flange_R + 8, -flange_R * 0.45,
+                 "END-SHIELD (bearing cap) %cbore %.0f" % (0xD8, a.endshield_bearing_bore))
+    d.datum(g.shaft_radius + 3, -3, "A")
+    d.fcf(g.bore_radius + 6, -R_ext * 0.5, ["RUNOUT", "0.03", "A"])
 
     # title block (lower-right) + BOM table (lower-left)
     _title_block(d, R_house + 6, -R_house + 10, 95, _common_title_rows(p, "1 ASSY", "1:2", date))
@@ -324,9 +370,11 @@ def assembly_sheet(p: MotorParams, date: str = "-------") -> Drawing:
 
 def stator_sheet(p: MotorParams, date: str = "-------") -> Drawing:
     g = em_design.derive(p)
+    a = p.assembly
     bp = _bp.generate(p)
     d = Drawing("stator")
-    _draw_cross_section(d, bp, roles={"stator_steel", "stator_slot_cut"})
+    _draw_cross_section(d, bp, roles={"stator_steel", "stator_slot_cut",
+                                      "stator_tie_rod_cut", "stator_key_cut"})
     Ro = g.stator_outer_radius
     d.centerlines(Ro * 1.15)
     y = Ro + 14
@@ -340,12 +388,23 @@ def stator_sheet(p: MotorParams, date: str = "-------") -> Drawing:
              "SLOT WIDTH %.2f  TOOTH %.1f" % (g.slot_width, p.stator.tooth_width))
     d.leader((Ro + g.slot_body_outer_radius) / 2, 0, -Ro - 10, -Ro * 0.30,
              "BACK IRON %.0f" % p.stator.back_iron_thickness)
+    # assembly features: tie-rod ring + OD anti-rotation key
+    if a.enabled and a.stator_tie_rod_count > 0:
+        pr = a.stator_tie_rod_pitch_radius or 0.5 * (g.slot_body_outer_radius + Ro)
+        d.leader(0, pr, Ro + 10, Ro * 0.45,
+                 "%dx TIE-ROD %c%.1f @ R%.0f" % (a.stator_tie_rod_count, 0xD8, a.stator_tie_rod_diameter, pr))
+    if a.enabled and a.stator_key_count > 0:
+        d.leader(Ro - a.stator_key_depth / 2, 0, Ro + 10, Ro * 0.70,
+                 "%dx OD KEY %.0fx%.1f" % (a.stator_key_count, a.stator_key_width, a.stator_key_depth))
+    d.datum(g.bore_radius + 2, 2, "A")
+    d.fcf(Ro * 0.40, -Ro - 16, ["POS", "0.05", "A"])   # slot-pattern position to the bore axis
     _title_block(d, Ro + 6, -Ro + 6, 95, _common_title_rows(p, "2 STATOR", "1:1.5", date))
     _notes_block(d, -Ro - 10, -Ro - 6, "NOTES:", [
         "1. Laminate: %s." % p.material.electrical_steel,
         "2. Stamped slot/tooth/bore features +/-0.02; slot opening +/-0.02.",
         "3. Bore %cH7; cylindricity 0.015; runout 0.02-0.03 to A." % 0xD8,
         "4. Stack length %.0f +/-0.30; backlack-bond, stacking >= 0.96." % p.stack_length,
+        "5. Tie-rod holes + OD key clamp/locate the stack (see hardware schedule).",
     ], 3.0)
     return d
 
@@ -353,8 +412,10 @@ def stator_sheet(p: MotorParams, date: str = "-------") -> Drawing:
 def rotor_sheet(p: MotorParams, date: str = "-------") -> Drawing:
     g = em_design.derive(p)
     bp = _bp.generate(p)
+    a = p.assembly
     d = Drawing("rotor")
-    _draw_cross_section(d, bp, roles={"rotor_steel", "magnet_pocket_cut", "magnet", "rotor_hole_cut"})
+    _draw_cross_section(d, bp, roles={"rotor_steel", "magnet_pocket_cut", "magnet",
+                                      "rotor_hole_cut", "rotor_rivet_cut", "rotor_keyway_cut"})
     Ro = g.rotor_outer_radius
     d.centerlines(Ro * 1.2)
     y = Ro + 12
@@ -368,12 +429,161 @@ def rotor_sheet(p: MotorParams, date: str = "-------") -> Drawing:
     d.leader(Ro * 0.66, Ro * 0.12, -Ro - 10, Ro * 0.30, "V-ANGLE %.0f%c" % (p.rotor.v_angle_deg, 0xB0))
     d.leader(g.shaft_radius + p.rotor.vertex_gap, 1.0, Ro + 10, -Ro * 0.2,
              "CENTRE RIB %.1f" % (2 * p.rotor.center_post_halfwidth))
+    if a.enabled and a.rotor_rivet_count > 0:
+        pr = a.rotor_rivet_pitch_radius or (g.shaft_radius + 0.45 * p.rotor.vertex_gap)
+        d.leader(0, pr, -Ro - 10, -Ro * 0.55,
+                 "%dx RIVET/END-PLATE %c%.1f @ R%.0f" % (a.rotor_rivet_count, 0xD8, a.rotor_rivet_diameter, pr))
+    d.datum(g.shaft_radius + 2, 2, "B")
+    d.fcf(Ro * 0.40, -Ro - 16, ["POS", "0.10(M)", "B"])   # magnet-pocket position to the bore/d-axis
     _title_block(d, Ro + 6, -Ro + 6, 95, _common_title_rows(p, "3 ROTOR", "1:1.5", date))
     _notes_block(d, -Ro - 10, -Ro - 6, "NOTES:", [
         "1. Magnet: sintered NdFeB %s; assemble UNMAGNETIZED, magnetize in place." % p.material.magnet_grade,
         "2. Pocket width +0.05/0; pole position +/-0.1%c (pos 0.10 MMC to B)." % 0xB0,
         "3. Outer bridge %.1f +/-0.05; finish OD on journals (runout 0.02 to A)." % p.rotor.outer_bridge,
         "4. Balance assembled rotor ISO 21940-11 G2.5 (target G1.0) at max speed.",
+        "5. Bore = shaft press/shrink fit (H7); rivet/end-plate holes retain the stack.",
+    ], 3.0)
+    return d
+
+
+def shaft_sheet(p: MotorParams, date: str = "-------") -> Drawing:
+    """Longitudinal (side) section of the shaft with its manufacturing features:
+    stepped journals / bearing seats, the DIN 6885 drive-end keyway, the DIN 471
+    retaining-ring groove and the hollow-shaft radial oil cross-holes."""
+    g = em_design.derive(p)
+    a = p.assembly
+    sh = p.shaft
+    d = Drawing("shaft")
+    # longitudinal outline: plot the (r, z) profile as (z, +/-r) -- a side section
+    prof = _bp.shaft_profile(p, g)
+    top = [(z, r) for (r, z) in prof]
+    d.polyline(top, closed=True)
+    d.polyline([(z, -r) for (r, z) in prof], closed=True)
+    z_l = -sh.overhang
+    z_r = p.stack_length + sh.overhang
+    r_main = sh.diameter / 2.0
+    r_brg = sh.bearing_seat_diameter / 2.0
+    has_stub = sh.drive_stub_length > 0 and 0 < sh.drive_stub_diameter < sh.bearing_seat_diameter
+    r_stub = sh.drive_stub_diameter / 2.0
+    z_end = z_r + sh.drive_stub_length if has_stub else z_r
+    d.line(z_l - 8, 0, z_end + 8, 0, "CL")         # rotation-axis centre-line
+
+    # overall length + key diameters
+    yL = r_main + 20
+    d.line(z_l, 0, z_l, yL, "DIM"); d.line(z_end, 0, z_end, yL, "DIM")
+    d.line(z_l, yL, z_end, yL, "DIM")
+    d._arrowhead((z_l, yL), (z_end, yL)); d._arrowhead((z_end, yL), (z_l, yL))
+    d.text((z_l + z_end) / 2.0, yL + 2, "OAL %.0f" % (z_end - z_l), _TXT, "TEXT", "bm")
+    d.leader(0, r_main, z_l, r_main + 12, "%cJOURNAL %.0f (n6/m6 rotor seat)" % (0xD8, sh.diameter))
+    d.leader(z_r - sh.bearing_seat_length / 2, r_brg, z_r - 30, r_brg + 16,
+             "%cBEARING SEAT %.0f k5" % (0xD8, sh.bearing_seat_diameter))
+    if has_stub:
+        d.leader(z_r + sh.drive_stub_length / 2, r_stub, z_end, r_stub + 14,
+                 "%cOUTPUT STUB %.0f" % (0xD8, sh.drive_stub_diameter))
+    if sh.bore_diameter > 0:
+        d.leader(z_l + 4, sh.bore_diameter / 2, z_l, -r_main - 12,
+                 "%cHOLLOW BORE %.0f (oil feed)" % (0xD8, sh.bore_diameter))
+
+    # assembly features -- keyway sits on the output stub (if present) else the DE seat
+    if a.enabled and a.shaft_keyway_width > 0:
+        if has_stub:
+            r_surf = r_stub
+            kl = min(a.shaft_keyway_length, sh.drive_stub_length)
+            zk0 = z_r + (sh.drive_stub_length - kl)
+        else:
+            r_surf = r_brg
+            kl = min(a.shaft_keyway_length, sh.bearing_seat_length)
+            zk0 = z_r - kl
+        zk1 = zk0 + kl
+        d.polyline([(zk0, r_surf - a.shaft_keyway_depth), (zk1, r_surf - a.shaft_keyway_depth),
+                    (zk1, r_surf), (zk0, r_surf)], closed=False)
+        d.leader(zk0 + kl / 2, r_surf - a.shaft_keyway_depth / 2, zk0, -r_main - 12,
+                 "DE KEYWAY %.0fx%.1f L%.0f (DIN 6885)" % (a.shaft_keyway_width, a.shaft_keyway_depth, kl))
+    if a.enabled and a.shaft_snap_ring_width > 0:
+        zg = z_r - sh.bearing_seat_length - a.shaft_snap_ring_width
+        d.polyline([(zg, r_main - a.shaft_snap_ring_depth), (zg + a.shaft_snap_ring_width, r_main - a.shaft_snap_ring_depth),
+                    (zg + a.shaft_snap_ring_width, r_main), (zg, r_main)], closed=False)
+        d.leader(zg, r_main - a.shaft_snap_ring_depth, zg - 14, r_main + 14,
+                 "RETAINING GROOVE (DIN 471)")
+    if a.enabled and sh.bore_diameter > 0 and a.shaft_oil_hole_count > 0:
+        zc = p.stack_length / 2.0
+        d.line(zc, sh.bore_diameter / 2, zc, r_main, "GEOM")
+        d.line(zc, -sh.bore_diameter / 2, zc, -r_main, "GEOM")
+        d.leader(zc, r_main, zc + 20, r_main + 14,
+                 "%dx OIL CROSS-HOLE %c%.0f" % (a.shaft_oil_hole_count, 0xD8, a.shaft_oil_hole_diameter))
+
+    d.datum(z_l + sh.bearing_seat_length / 2, -r_brg - 2, "A")
+    d.datum(z_r - sh.bearing_seat_length / 2, -r_brg - 2, "B")
+    d.fcf(0, -r_main - 16, ["RUNOUT", "0.01", "A-B"])   # journal runout to the bearing axes
+    _title_block(d, z_end + 14, r_main + 8, 95, _common_title_rows(p, "4 SHAFT", "1:2", date))
+    _notes_block(d, z_l, -r_main - 26, "NOTES:", [
+        "1. Material: alloy steel 42CrMo4 / 4140, hardened journals.",
+        "2. Bearing seats k5; journal Ra<=0.4 um ground; coaxiality 0.01 to A-B.",
+        "3. Keyway width N9; symmetry 0.02 to axis. Retaining groove per DIN 471.",
+        "4. Machine OD after pressing the rotor stack; two-plane balance the assembly.",
+    ], 3.0)
+    return d
+
+
+def exploded_sheet(p: MotorParams, date: str = "-------") -> Drawing:
+    """Exploded ASSEMBLY layout: each major component as a longitudinal half-section,
+    laid out left->right in assembly order with the assembly-path centre-line, so the
+    build-up (end-shields / housing+stator / rotor+shaft) reads at a glance."""
+    g = em_design.derive(p)
+    a = p.assembly
+    sh = p.shaft
+    bp = _bp.generate(p)
+    d = Drawing("exploded")
+    housing = next((s for s in bp["build_steps"] if s["role"] == "housing" and s["kind"] == "tube"), None)
+    h_len = housing["length"] if housing else p.stack_length + 50.0
+    jacket_inner = g.stator_outer_radius + p.cooling.housing_gap
+    flange_R = jacket_inner + p.cooling.jacket_thickness + (
+        a.housing_flange_od_margin if (a.enabled and a.housing_flange_thickness > 0) else 0.0)
+    es_t = a.endshield_thickness if (a.enabled and a.endshield_enabled) else 0.0
+    es_bore = a.endshield_bearing_bore / 2.0
+
+    # (label, length, r_in, r_out) in assembly order
+    comps = []
+    if es_t:
+        comps.append(("NDE END-SHIELD", es_t, es_bore, flange_R))
+    comps.append(("HOUSING + JACKET", h_len, jacket_inner, flange_R))
+    comps.append(("STATOR + WINDING", p.stack_length, g.bore_radius, g.stator_outer_radius))
+    comps.append(("ROTOR + MAGNETS", p.stack_length, g.shaft_radius, g.rotor_outer_radius))
+    shaft_len = sh.overhang * 2 + p.stack_length + (sh.drive_stub_length if sh.drive_stub_length > 0 else 0.0)
+    comps.append(("SHAFT", shaft_len, sh.bore_diameter / 2.0, sh.diameter / 2.0))
+    if es_t:
+        comps.append(("DE END-SHIELD", es_t, es_bore, flange_R))
+
+    gap = flange_R * 0.55
+    x = 0.0
+    centres = []
+    for label, length, r_in, r_out in comps:
+        # full longitudinal section (upper + lower band) of the component envelope
+        d.polyline([(x, r_in), (x + length, r_in), (x + length, r_out), (x, r_out)], closed=True)
+        if r_in > 1e-6:
+            d.polyline([(x, -r_in), (x + length, -r_in), (x + length, -r_out), (x, -r_out)], closed=True)
+        else:  # solid (shaft, no bore) -> single band through the axis
+            d.polyline([(x, -r_out), (x + length, -r_out), (x + length, r_out), (x, r_out)], closed=True)
+        d.text(x + length / 2.0, -flange_R - 8, label, 3.4, "TEXT", "tm")
+        d.text(x + length / 2.0, flange_R + 6, "%cmax %.0f" % (0xD8, 2 * r_out), 3.0, "TEXT", "bm")
+        centres.append((x + length / 2.0, x, x + length))
+        x += length + gap
+
+    total = x - gap
+    d.line(-gap, 0, total + gap, 0, "CL")          # assembly-path centre-line
+    # assembly-order numbers + flow arrows between components
+    for i, (cx, x0, x1) in enumerate(centres):
+        d.text(cx, flange_R + 16, "%d" % (i + 1), 4.2, "TEXT", "bm")
+        if i + 1 < len(centres):
+            nx0 = centres[i + 1][1]
+            d._arrowhead((nx0, 0.0), (x1, 0.0))
+
+    _title_block(d, total - 95, -flange_R - 20, 95, _common_title_rows(p, "5 EXPLODED", "1:5", date))
+    _notes_block(d, -gap, flange_R + 40, "ASSEMBLY ORDER (see docs/MANUFACTURING.md):", [
+        "1-2. Press/bond stacks; shrink stator into the housing jacket.",
+        "3.   Press rotor + magnets onto the hollow shaft; magnetize in place; balance.",
+        "4.   Insert rotor/shaft into the stator bore (keep the 0.70 mm air gap).",
+        "5-6. Bolt the end-shields (bearings) to the flanges; seal; fill coolant; EOL test.",
     ], 3.0)
     return d
 
@@ -381,7 +591,9 @@ def rotor_sheet(p: MotorParams, date: str = "-------") -> Drawing:
 def all_sheets(p: MotorParams, date: str = "-------") -> Dict[str, Drawing]:
     return {"1_assembly": assembly_sheet(p, date),
             "2_stator": stator_sheet(p, date),
-            "3_rotor": rotor_sheet(p, date)}
+            "3_rotor": rotor_sheet(p, date),
+            "4_shaft": shaft_sheet(p, date),
+            "5_exploded": exploded_sheet(p, date)}
 
 
 def write_drawings(p: MotorParams, out_dir: str = "drawings", date: str = "-------") -> List[str]:

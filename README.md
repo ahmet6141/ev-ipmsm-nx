@@ -23,13 +23,13 @@ builder** ayrımının Siemens NX'e taşınmış hâli:
 | Boyutlandırma | [motor_nx/em_design.py](motor_nx/em_design.py) | Hayır | Türetilmiş geometri, sargı faktörleri, **tasarım doğrulaması** |
 | Blueprint | [motor_nx/blueprint.py](motor_nx/blueprint.py) | Hayır | Saf-matematik geometri → sıralı CAD "build step" listesi + JSON |
 | Önizleme | [motor_nx/preview.py](motor_nx/preview.py) | Hayır | NX'siz SVG kesit (görsel doğrulama) |
-| İmalat | [motor_nx/manufacturing.py](motor_nx/manufacturing.py) | Hayır | Geometriden BOM (kütle/adet/maliyet) + GD&T tolerans + eksantriklik yığılımı |
+| İmalat | [motor_nx/manufacturing.py](motor_nx/manufacturing.py) | Hayır | Geometriden BOM (kütle/adet/maliyet) + GD&T tolerans + **bağlantı-elemanı (donanım) listesi** + eksantriklik yığılımı |
 | Analiz | [motor_nx/analysis.py](motor_nx/analysis.py) | Hayır | Birinci-mertebe kayıp/termal/demag/rotor-gerilme/cogging analizleri |
-| Resimler | [motor_nx/drawings.py](motor_nx/drawings.py) | Hayır | Ölçülendirilmiş 2D imalat resimleri (DXF + SVG) |
+| Resimler | [motor_nx/drawings.py](motor_nx/drawings.py) | Hayır | GD&T çerçeveli ölçülü 2D imalat resimleri (DXF + SVG): montaj / stator / rotor / şaft / patlatılmış montaj |
 | FEA | [motor_nx/fea.py](motor_nx/fea.py) | Hayır | FEA hand-off paketi (spec JSON + DXF + sargı haritası) |
 | NX builder | [motor_nx/nx_builder.py](motor_nx/nx_builder.py) | **Evet** | NXOpen Python ile build step'leri NX'te modele çevirir + export |
 | Batch sürücü | [batch_build.py](batch_build.py) | Hayır | run_journal.exe'yi sürer; parametre süpürme + manifest |
-| CLI | [motor_nx/cli.py](motor_nx/cli.py) | Hayır | report / validate / blueprint / preview / bom / tolerances / fea |
+| CLI | [motor_nx/cli.py](motor_nx/cli.py) | Hayır | report / validate / blueprint / preview / bom / tolerances / hardware / drawings / fea / analysis |
 
 `params`, `em_design`, `blueprint`, `preview`, `manufacturing`, `fea` düz CPython ile
 çalışır ve tamamen test edilebilir. Yalnızca `nx_builder` `NXOpen`'ı import eder; bu
@@ -49,12 +49,17 @@ python -m motor_nx.cli preview -o preview.svg
 # NX builder'ın tükettiği blueprint JSON'u üret
 python -m motor_nx.cli blueprint -o blueprint.json
 
-# İmalat: malzeme listesi (BOM) + GD&T tolerans şeması
+# İmalat: malzeme listesi (BOM) + GD&T tolerans şeması + bağlantı-elemanı listesi
 python -m motor_nx.cli bom --csv bom.csv
 python -m motor_nx.cli tolerances --csv tol.csv
+python -m motor_nx.cli hardware --csv hw.csv   # civata/kama/segman/rulman/keçe...
+python -m motor_nx.cli dfm                     # DFM Monte Carlo: hava-aralığı eksantriklik Cpk'sı
 
-# 2D imalat resimleri (DXF + SVG): montaj / stator / rotor
+# 2D imalat resimleri (DXF + SVG): montaj / stator / rotor / şaft / patlatılmış montaj
 python -m motor_nx.cli drawings -o drawings/
+
+# TÜM imalat paketi tek klasörde (BOM+donanım+tolerans+DFM+5 çizim+Markdown özet)
+python -m motor_nx.cli package -o manufacturing/
 
 # Birinci-mertebe analizler: kayıp / termal / demag / rotor-gerilme / cogging
 python -m motor_nx.cli analysis
@@ -128,8 +133,23 @@ Tüm tasarım [motor_nx/params.py](motor_nx/params.py)'deki dataclass'lardan gel
 `em_design.validate()` her build'den önce geometrik olarak imkânsız kombinasyonları
 (negatif kalınlık, kutbu aşan mıknatıs, sığmayan iletken, …) yakalar.
 
+## Montaj / üretim özellikleri
+
+3D model yalnız EM-aktif gövdeleri değil, **profesyonel montaj/üretim özelliklerini**
+de içerir (varsayılan açık; `assembly.enabled` ile kapatılır): stator tie-rod/bağlama
+delikleri + dönmez OD kaması, rotor balans/perçin delikleri, **şaft çıkış stub'ı** + kama
+yuvası (DIN 6885) + segman kanalı (DIN 471) + içi-boş-şaft yağ delikleri, gövde montaj
+flanşı + civata daireleri (şanzıman + uç-kalkan) + soğutucu giriş/çıkış portları +
+terminal geçişi (+ boss) + kaldırma deliği, ve **end-shield'ler (DE+NDE rulman kapakları)
+ayrı parça olarak**. Her özellik parametriktir (sayı/boyut 0 → kapalı) ve **build'den önce
+geometrik olarak doğrulanır** (`em_design.validate`); varsayılan motor NX 2506'da
+**486 katı gövde, 0 hata** ile build-doğrulandı. Bağlantı-elemanı listesi `cli hardware`,
+DFM eksantriklik yetkinliği `cli dfm`, tüm paket `cli package`. Tam katalog +
+parça-parça şartname: [project_details/](project_details/).
+
 Belgeler:
 
+- [project_details/](project_details/) — **insan + yapay zekâ için düz-metin proje anlatımı** (genel bakış, mimari, parça-parça şartname, montaj özellikleri kataloğu)
 - [docs/DESIGN.md](docs/DESIGN.md) — tasarım gerekçesi + parametre tablosu
 - [docs/NX_AUTOMATION.md](docs/NX_AUTOMATION.md) — NXOpen otomasyon (NX 2506) referansı
 - [docs/MANUFACTURING.md](docs/MANUFACTURING.md) — BOM + GD&T toleranslar + imalat süreci
