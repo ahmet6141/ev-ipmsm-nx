@@ -3,6 +3,10 @@ the NXOpen Python API. RUN INSIDE NX (headless) via run_journal.exe:
 
     "%UGII_ROOT_DIR%\\run_journal.exe" nx_builder.py -args <blueprint.json> <out.prt> [step|parasolid|both|none] [parts]
 
+Export mode DEFAULTS to "step" (AP242, reliable). Parasolid (.x_t) is opt-in
+("parasolid"/"both") and non-fatal -- it can fault + poison the session on large
+parts, so STEP carries the full assembly by default.
+
 This is the ONLY module that imports NXOpen, so it never runs under the plain
 CPython test interpreter -- it is exercised inside a real NX session.
 
@@ -629,8 +633,9 @@ def export_parasolid(part, out_path, bodies=None):
     in the part; EntirePart drags those into the Parasolid translator and trips it
     ("Modeler error: please report fault"). The fault scales with curve count, so it
     surfaced once the manufacturing-assembly features added ~40 more sectioned cuts.
-    STEP already selects bodies only -- which is why STEP succeeds where Parasolid
-    EntirePart fails. (Verified failing on real NX 2506; bodies-only is the fix.)"""
+    STEP already selects bodies only -- which is why STEP succeeds where the Parasolid
+    UF path faults on real NX 2506. STEP (AP242) is therefore the reliable, default
+    export; Parasolid is opt-in and may be unavailable on some installs (then skipped)."""
     _save(part)
     if bodies is None:
         bodies = [b for b in part.Bodies if b.IsSolidBody]
@@ -640,28 +645,41 @@ def export_parasolid(part, out_path, bodies=None):
         except OSError:
             pass
     # NX 2506 uses DexManager.CreateParasolidExporter(); older builds exposed
-    # CreateParasolidCreator(). Try whichever the DexManager provides, selecting the
-    # solid bodies (NOT EntirePart); fall back to the UF exporter.
+    # CreateParasolidCreator(). Prefer the DexManager exporter (bodies-only, then
+    # EntirePart). The UF Ps.ExportData fallback can throw "Modeler error: please
+    # report fault" on a large part AND POISON the modeling session for the next run
+    # -- so it is used ONLY when no DexManager Parasolid factory exists at all.
+    last = None
+    had_factory = False
     for factory_name in ("CreateParasolidExporter", "CreateParasolidCreator"):
         factory = getattr(_SESSION.DexManager, factory_name, None)
         if factory is None:
             continue
-        try:
-            pc = factory()
-            pc.ObjectTypes.Solids = True
-            pc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.SelectedObjects
-            pc.ExportSelectionBlock.SelectionComp.Add(bodies)
-            pc.InputFile = part.FullPath
-            pc.OutputFile = out_path
-            pc.Commit()
-            pc.Destroy()
-            return
-        except (AttributeError, NXOpen.NXException):
-            pass
-    if _UF is None:
-        raise RuntimeError("no Parasolid exporter available (DexManager factories + UF both absent)")
-    # UF Ps.ExportData wants object TAGS (unsigned int), not NXOpen.Body objects.
-    _UF.Ps.ExportData([b.Tag for b in bodies], out_path)
+        had_factory = True
+        for use_bodies in (True, False):   # bodies-only first (no construction curves), then EntirePart
+            try:
+                pc = factory()
+                pc.ObjectTypes.Solids = True
+                if use_bodies:
+                    pc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.SelectedObjects
+                    pc.ExportSelectionBlock.SelectionComp.Add(bodies)
+                else:
+                    pc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.EntirePart
+                pc.InputFile = part.FullPath
+                pc.OutputFile = out_path
+                pc.Commit()
+                pc.Destroy()
+                return
+            except (AttributeError, NXOpen.NXException) as exc:
+                last = exc
+    if not had_factory and _UF is not None:
+        # older NX without a DexManager Parasolid exporter: UF takes object TAGS
+        _UF.Ps.ExportData([b.Tag for b in bodies], out_path)
+        return
+    raise RuntimeError(
+        "Parasolid (.x_t) export unavailable on this NX -- use the STEP (.stp) file "
+        "(full assembly, AP242) or export Parasolid from the NX GUI (File > Export > "
+        "Parasolid). Last DexManager error: %s" % last)
 
 
 # --------------------------------------------------------------------------- #
@@ -692,9 +710,12 @@ def main():
     # step|parasolid|both|none picks the whole-part export, "parts" ALSO writes each
     # component as its own STEP (piece-by-piece), nxpatterns enables NX pattern
     # features. With NO blueprint given, the default EV IPMSM is built.
+    # DEFAULT EXPORT = "step" (AP242): it reliably selects bodies only. Parasolid is
+    # OPT-IN ("parasolid"/"both") because the .x_t path can fault on this large part
+    # and poison the NX session -- STEP carries the full assembly regardless.
     blueprint = None
     out_prt = None
-    export_mode = "both"
+    export_mode = "step"
     use_nx_patterns = False
     for a in sys.argv[1:]:
         al = a.lower()
@@ -747,20 +768,31 @@ def main():
         builder.log("BUILD ABORTED:\n" + traceback.format_exc())
 
     base = os.path.splitext(out_prt)[0]
+    # STEP is the reliable, primary export (AP242, body-selected) -- keep it isolated.
     try:
         if export_mode in ("step", "both"):
             export_step(part, base + "_ap242.stp", "ap242")
             builder.log("exported %s_ap242.stp" % base)
-        if export_mode in ("parasolid", "both"):
-            export_parasolid(part, base + ".x_t")
-            builder.log("exported %s.x_t" % base)
         if export_mode == "none":
             _save(part)
+    except Exception:
+        builder.log("STEP EXPORT FAILED:\n" + traceback.format_exc())
+    # Parasolid is OPT-IN and NON-FATAL: a .x_t fault must not abort the run or hide
+    # the (already-saved) .prt/.stp. Warn clearly and recommend a restart if it faults.
+    if export_mode in ("parasolid", "both"):
+        try:
+            export_parasolid(part, base + ".x_t")
+            builder.log("exported %s.x_t" % base)
+        except Exception as _pexc:
+            builder.log("Parasolid (.x_t) export SKIPPED: %s" % _pexc)
+            builder.log("  -> use the STEP (.stp) file; if NX threw a modeler fault, RESTART NX "
+                        "before the next build (the fault can poison the session).")
+    try:
         if per_part:
             builder.log("--- per-part (piece-by-piece) STEP export ---")
             builder.export_parts(base)
     except Exception:
-        builder.log("EXPORT FAILED:\n" + traceback.format_exc())
+        builder.log("PER-PART EXPORT FAILED:\n" + traceback.format_exc())
 
     builder.log("=== done (%d errors) ===" % len(builder.errors))
 
