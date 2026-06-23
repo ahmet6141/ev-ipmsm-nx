@@ -8,6 +8,9 @@ manufacturing/FEA hand-off data -- all without Siemens NX.
     python -m motor_nx.cli fea          [config.json] [-o fea/]   FEA hand-off package
     python -m motor_nx.cli bom          [config.json] [--csv b.csv]  Bill of Materials
     python -m motor_nx.cli tolerances   [config.json] [--csv t.csv]  GD&T scheme
+    python -m motor_nx.cli hardware     [config.json] [--csv h.csv]  fastener / hardware schedule
+    python -m motor_nx.cli dfm          [config.json] [-n 20000]    DFM Monte Carlo eccentricity (Cpk)
+    python -m motor_nx.cli package      [config.json] [-o mfg/]     full manufacturing package (all of the above)
     python -m motor_nx.cli drawings     [config.json] [-o drawings/] 2D drawings (DXF+SVG)
     python -m motor_nx.cli analysis     [config.json]              loss/thermal/demag/stress/cogging
 
@@ -57,6 +60,18 @@ def main(argv=None):
     p_tol = sub.add_parser("tolerances", help="critical-dimension / GD&T scheme")
     p_tol.add_argument("config", nargs="?")
     p_tol.add_argument("--csv", help="also write the tolerance table to this CSV path")
+
+    p_hw = sub.add_parser("hardware", help="fastener / hardware schedule (bolts, keys, rings, bearings, seals)")
+    p_hw.add_argument("config", nargs="?")
+    p_hw.add_argument("--csv", help="also write the hardware schedule to this CSV path")
+
+    p_dfm = sub.add_parser("dfm", help="DFM Monte Carlo: assembled air-gap eccentricity capability (Cpk)")
+    p_dfm.add_argument("config", nargs="?")
+    p_dfm.add_argument("-n", "--trials", type=int, default=20000)
+
+    p_pkg = sub.add_parser("package", help="write the complete manufacturing package (BOM+hardware+tolerances+DFM+drawings+summary)")
+    p_pkg.add_argument("config", nargs="?")
+    p_pkg.add_argument("-o", "--out", default="manufacturing")
 
     p_dwg = sub.add_parser("drawings", help="2D manufacturing drawings (DXF + SVG): assembly, stator, rotor")
     p_dwg.add_argument("config", nargs="?")
@@ -131,6 +146,32 @@ def main(argv=None):
         from . import drawings
         written = drawings.write_drawings(params, args.out, datetime.date.today().isoformat())
         print("wrote %d 2D drawing files to %s/:" % (len(written), args.out))
+        for path in written:
+            print("  ", path)
+        return 0
+
+    if args.cmd == "hardware":
+        from . import manufacturing as mfg
+        print(mfg.hardware_report(params))
+        if args.csv:
+            import csv
+            with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+                wr = csv.writer(fh)
+                wr.writerow(["item", "standard", "size", "qty", "note"])
+                for h in mfg.hardware_schedule(params):
+                    wr.writerow([h["item"], h["standard"], h["size"], h["qty"], h["note"]])
+            print("\nwrote %s" % args.csv)
+        return 0
+
+    if args.cmd == "dfm":
+        from . import manufacturing as mfg
+        print(mfg.dfm_report(params, args.trials))
+        return 0
+
+    if args.cmd == "package":
+        from . import manufacturing as mfg
+        written = mfg.write_manufacturing_package(params, args.out)
+        print("wrote manufacturing package (%d files) to %s/:" % (len(written), args.out))
         for path in written:
             print("  ", path)
         return 0

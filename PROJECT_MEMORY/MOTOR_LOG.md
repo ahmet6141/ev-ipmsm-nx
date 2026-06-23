@@ -140,8 +140,66 @@ rafine + NX Drafting + configs doğrula.)
   ve geçici journal'lar `_perf.py`, `_fea.py`.
 - Kalıcı: `motor_nx/`, `docs/FEA_PREP.md` + `DESIGN.md` + `NX_AUTOMATION.md`, `fea/`, `PROJECT_MEMORY/`.
 
+## Adım 6 — Montaj/üretim özellikleri + klasör düzeni (2026-06-23)
+- **`AssemblyParams` (params.py, yeni grup):** her parçaya profesyonel montaj/üretim
+  özellikleri — stator tie-rod delikleri + dönmez OD kaması; rotor rivet/uç-plaka
+  delikleri + opsiyonel bore kama; şaft DE kama yuvası (DIN 6885) + segman kanalı
+  (DIN 471) + radyal yağ delikleri; gövde montaj flanşı (DE+NDE) + şanzıman & uç-kalkan
+  civata daireleri + radyal soğutucu portları + terminal geçişi + kaldırma deliği.
+  Hepsi parametrik, `assembly.enabled`/sayı/boyut=0 ile kapatılabilir. `expressions()`
+  ve `_GROUP_TYPES`'a "assembly" eklendi.
+- **`blueprint.py`:** `assembly_steps()` + yeni **`hole`** build-step kind'ı (keyfi
+  eksende silindirik kesim → radyal delikler). Flanş = dolu disk-unite + bore-reopen.
+- **`em_design.py`:** `_validate_assembly()` — her özellik build'den önce geometrik
+  doğrulanır (duvar payı, oluk/mıknatıs/kanal çakışması, civata dairesi flanşa sığar,
+  halka binmesi). Varsayılan + 8-kutup varyant TEMİZ.
+- **`nx_builder.py`:** `hole` kind handler (`_extrude_on_axis`/`_circle_curve_on_axis`,
+  keyfi eksen).
+- **GERÇEK NX 2506'da BUILD DOĞRULANDI (2026-06-23):** varsayılan motor TÜM montaj
+  özellikleriyle **486 katı gövde, 0 step hatası** kuruldu (tüm `hole`/flanş/civata/
+  kama/segman/tie-rod/rivet adımları OK); STEP (_ap242.stp) export başarılı. İki düzeltme:
+  - **Parasolid (.x_t) export'u patladı** ("Modeler error: please report fault",
+    `_UF.Ps.ExportData`). Kök neden: `export_parasolid` `EntirePart` kapsamı kullanıyordu →
+    section'ların dumb construction curve'lerini PK translator'a sürüyordu. **DÜZELTME:**
+    STEP gibi yalnız katı gövdeleri seç (SelectedObjects + SelectionComp.Add).
+  - **Şaft kama yuvası** çap basamağını geçip yüzey-altı slot oluşturuyordu. **DÜZELTME:**
+    kama yuvası DE rulman-yatağı journal'ına clamp'lendi (uzunluk ≤ bearing_seat_length);
+    varsayılan 30→18. Her ikisi de saf-Python'da 78 testle geçti, **NX'te re-confirm bekliyor.**
+- **`manufacturing.py`:** `hole` hacmi; `hardware_schedule()`/`hardware_report()`
+  (civata/kama/segman/rulman/keçe/sensör); montaj GD&T tolerans satırları; flanş BOM'da
+  (tek döküm, qty=1). Toplam kütle ~42.7 kg (aralıkta).
+- **`drawings.py`:** stator/rotor sheet'lerine montaj callout'ları; **4. sayfa = şaft**
+  boyuna kesiti (kama/segman/yağ delikleri). `cli.py`'ye `hardware` komutu.
+- **Testler:** `tests/test_assembly.py` (14 test); test_drawings 4 sayfa/8 dosyaya
+  güncellendi. **78/78 test GEÇTİ** (.venv Python 3.10 ile koşuldu).
+- **Klasör düzeni:** üretilmiş CAD çıktıları → `build/legacy/`; deneysel scratch
+  (`_*.py`, `fem2.fem`, `sim1.sim`) → `archive/`. Kök temizlendi. `.gitignore`
+  güncellendi (build/* ve /archive/* yoksay, README'ler izlenir). **Yeni klasör
+  `project_details/`** — insan+AI için düz-metin proje anlatımı (genel bakış, mimari,
+  parça-parça şartname, montaj özellikleri kataloğu).
+
+## Adım 7 — montajı tamamla + imalat çıktılarını cilala (2026-06-23)
+- **Şaft çıkış stub'ı:** `ShaftParams.drive_stub_diameter/length` (Ø32×45). shaft_profile
+  rulmanın ötesine basamaklı uzantı ekler; kama yuvası artık **stub'a** yerleşir (yoksa DE seat'e).
+- **End-shield'ler (DE+NDE) GERÇEK gövde:** `assembly.endshield_*`; rulman-OD bore'lu (Ø80)
+  halka kapaklar, gövde uç-kalkan civata dairesiyle hizalı delikler. Yeni BOM grubu + NX
+  component (`EndShield`) + body adı (`ENDSHIELD`). Toplam kütle ~47.8 kg.
+- **Terminal boss:** terminal Ø28 etrafında kabartılmış döküm pad (radyal `hole` unite).
+- **Patlatılmış montaj çizimi (5. sayfa):** bileşenler montaj sırasıyla yarı-kesit + sıra okları.
+- **GD&T cilası:** `Drawing.fcf()` (feature-control frame) + `Drawing.datum()`; her sayfaya
+  datum (A/B/A-B) + FCF; assembly'ye flanş OD/civata-dairesi/end-shield callout'ları.
+- **DFM Monte Carlo:** `manufacturing.eccentricity_monte_carlo` (vektörel runout toplamı,
+  random faz, half-normal; over-budget ppm + **Cpk**). Varsayılan Cpk ~3.8 (OK). CLI `dfm` (seeded → deterministik).
+- **İmalat paketi:** `write_manufacturing_package` + CLI `package` → tek klasöre BOM+donanım+
+  tolerans CSV'leri + DFM raporu + Markdown özet + 5 çizim (15 dosya).
+- **Testler:** test_assembly 14→22, test_drawings 5 sayfa/10 dosya. **86/86 GEÇTİ.**
+  10/10 sweep varyantı (8-kutup dâhil) temiz. `.gitignore`'a `/manufacturing/`.
+
 ## Açık konular / dürüst sınırlar
 - Performans **analitik** (±%20-30); kesin değerler **FEA**'dan (Adım 4 paketi hazır).
 - Hairpin uç-sargı **per-slot zarf/U** seviyesinde; per-iletken (864 bar) solid + kesin sargı şeması
   endüstride **özel araç (Motor-CAD) + FEA** işi.
-- `configs/` boş; `batch_build.py` `configs/default.json` bekliyor (sweep için eklenebilir).
+- **Montaj özellikleri NX'te DOĞRULANMADI:** geometri+doğrulama+BOM saf-Python'da test edildi
+  (78 test), ama yeni `hole` primitifi ve flanş unite/reopen **gerçek NX'te smoke edilmeli**
+  (build-step sözdizimi doğru, NXOpen çağrı dizisi sıradaki in-NX koşusunda onaylanmalı).
+- `build/legacy/` ve `archive/` gitignore'da (yeniden üretilebilir/scratch); silinebilir.

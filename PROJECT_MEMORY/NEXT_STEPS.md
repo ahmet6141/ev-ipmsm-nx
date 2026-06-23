@@ -22,15 +22,30 @@
   `L_eff=k_stack·L` flux/torka uygulandı; 6 yeni test. (tepe tork 473→~440 Nm, daha tutarlı.)
 - ✅ **configs doğrulandı** — `tests/test_configs.py` (default temiz, sweep 10 varyant; dry-run yolu kilitli).
 
+## C) Montaj/üretim özellikleri — yapıldı (Adım 6, 2026-06-23)
+- ✅ **Her parçaya montaj delikleri + üretim detayları** (`AssemblyParams`): stator
+  tie-rod + OD kama; rotor rivet + opsiyonel bore kama; şaft kama yuvası (DIN 6885) +
+  segman kanalı (DIN 471) + yağ delikleri; gövde montaj flanşı + civata daireleri +
+  soğutucu portları + terminal + kaldırma deliği. Parametrik + `validate` ile vetlenir.
+- ✅ Yeni `hole` (radyal) build-step + `cli hardware` + 4. çizim (şaft) + 14 yeni test.
+- ✅ Klasör düzeni: `build/legacy/` + `archive/` + `project_details/` (insan+AI anlatımı).
+- ✅ **Montaj özellikleri NX'te BUILD DOĞRULANDI (2026-06-23):** varsayılan motor TÜM
+  özelliklerle **486 gövde, 0 step hatası** (tüm `hole`/flanş/civata/kama/segman/rivet OK);
+  STEP export OK. Bu, yeni `hole` primitifi + flanş yaklaşımının gerçek NX 2506'da çalıştığını kanıtlar.
+- ⬜ **İki düzeltmeyi NX'te RE-CONFIRM ET:** (a) Parasolid `.x_t` export'u EntirePart→bodies-only'a
+  alındı (construction-curve fault'u), (b) şaft kama yuvası DE seat'e clamp'lendi. İkisi de
+  saf-Python'da geçti; sıradaki `run_journal nx_builder.py` koşusunda `.x_t` üretildiğini doğrula.
+
 **Kalan (çoğu kullanıcı-tarafı):**
 1. ⬜ **Sürücüleri FİİLEN KOŞTUR:** `pip install ansys-motorcad-core` → `python verification/motorcad_emag.py`;
    NX'te `run_journal.exe verification\nx_drafting.py -args <motor>.prt A3`. (Lisans/çözüm sende.)
-2. ⬜ **Testleri koştur (sandbox bu oturumda kapalıydı):** `python tests/test_em_design.py`,
-   `python tests/test_configs.py`, ve diğer `tests/*.py`. Beklenen: hepsi geçer (statik izlendi).
+2. ✅ **Testleri koştur:** .venv (Python 3.10) ile **78/78 test GEÇTİ** (test_em_design, test_configs,
+   test_assembly + diğerleri). `python tests/test_*.py` ile tekrar doğrulanabilir.
 3. ⬜ **FEMM çapraz-kontrol scripti** (ücretsiz; `femm_labels.csv` sürücülü pyFEMM) — sıradaki doğal ek.
-4. ⬜ **Temizlik:** `motor_v2..v8.*`, `motor_hairpin*.*`, `nx_smoke*.*`, `_perf.py`/`_fea.py` sil
-   (kalıcı silme — onay gerek). + `.gitignore`.
-5. ⬜ **Commit/push:** `ev-ipmsm-nx` (terminal sende). Yeni dosyalar: `verification/`, `tests/test_configs.py`.
+4. ✅ **Temizlik:** çıktılar `build/legacy/`'e, scratch (`_*.py`/`fem2.fem`/`sim1.sim`) `archive/`'e
+   taşındı (silinmedi). `.gitignore` güncellendi (README'ler izlenir).
+5. ⬜ **Commit/push:** `ev-ipmsm-nx` (terminal sende). Yeni: `motor_nx/*` (montaj özellikleri),
+   `tests/test_assembly.py`, `project_details/`, `build/README.md`, `archive/README.md`.
 6. ⬜ Hairpin: kaynak tarafı + gerçek bağlantı şeması (ya da Motor-CAD'e bırak).
 
 ## Notlar

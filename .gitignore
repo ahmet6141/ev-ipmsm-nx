@@ -6,8 +6,10 @@ __pycache__/
 venv/
 .conda/
 
-# Siemens NX / generated CAD build outputs
-build/
+# Siemens NX / generated CAD build outputs (regenerate via batch_build.py / NX)
+# keep the folder's README so the layout stays self-documenting
+build/*
+!build/README.md
 *.prt
 *.prt.*
 *.stp
@@ -15,9 +17,15 @@ build/
 *.x_t
 *.xmt_txt
 *.jt
+*.fem
+*.sim
 
 # run / smoke logs
 *.log
+
+# archived experimental / scratch files (kept on disk, not version-controlled)
+/archive/*
+!/archive/README.md
 
 # root-level generated artifacts (regenerate via `python -m motor_nx.cli ...`)
 /blueprint.json
@@ -34,3 +42,6 @@ Thumbs.db
 
 # generated 2D drawing output (regenerate via cli drawings)
 /drawings/
+
+# generated manufacturing package (regenerate via cli package)
+/manufacturing/

@@ -79,6 +79,8 @@ class ShaftParams:
     overhang: float = 35.0              # shaft length added beyond the stack at EACH end
     bearing_seat_diameter: float = 40.0
     bearing_seat_length: float = 22.0
+    drive_stub_diameter: float = 32.0   # OUTPUT stub beyond the DE bearing (0 => none); carries the key
+    drive_stub_length: float = 45.0     # axial length of the output stub past the DE bearing seat
 
 
 @dataclass
@@ -93,6 +95,72 @@ class CoolingParams:
     spiral_pitch: float = 18.0          # axial advance per turn (channel_type == "spiral")
     spiral_channel_width: float = 6.0
     spiral_channel_depth: float = 5.0
+
+
+@dataclass
+class AssemblyParams:
+    """Manufacturing / assembly FEATURES layered on top of the electromagnetically
+    active solid: fastening holes, keyways, the mounting flange, coolant ports, the
+    terminal lead-through and the lifting eye. These are the production details a
+    real, *assemblable* part needs -- the EM-active solid alone (steel/magnets/
+    copper/shaft/jacket) has none of them.
+
+    Design rules:
+      * every feature is parametric and INDEPENDENTLY toggleable -- a count or a
+        size of 0 removes just that feature, so a pure-EM solid is `enabled=False`
+        (or all-zero) and never blocks a build;
+      * a *_pitch_radius of 0.0 means AUTO -- em_design / blueprint place the bolt
+        circle in the middle of the available material;
+      * em_design.validate() geometrically checks every feature (fits in the
+        material, clears slots/magnets/channels, bolt circle inside the flange,
+        ...) BEFORE the NX builder ever attempts the cut.
+
+    Standards referenced: ISO 286 (fits), DIN 6885-A (parallel keys), DIN 471 /
+    DIN 472 (retaining rings), ISO 4762 / metric clearance holes (bolt circles).
+    See docs/MANUFACTURING.md and project_details/ for the per-feature rationale.
+    """
+    enabled: bool = True                  # master switch (False => legacy pure-EM solid)
+
+    # --- stator lamination -------------------------------------------------- #
+    stator_tie_rod_count: int = 6         # axial clamping / tie-rod / handling holes in the yoke (back-iron)
+    stator_tie_rod_diameter: float = 6.5  # through-hole (M6 tie rod -> 6.5 clearance)
+    stator_tie_rod_pitch_radius: float = 0.0   # 0 => AUTO (mid back-iron, clear of the slot bottoms)
+    stator_key_count: int = 2             # anti-rotation key-NOTCHES on the OD (engage housing keys)
+    stator_key_width: float = 6.0         # tangential width of an OD key-notch
+    stator_key_depth: float = 2.5         # radial depth of an OD key-notch (must stay in the back-iron)
+
+    # --- rotor lamination --------------------------------------------------- #
+    rotor_rivet_count: int = 6            # axial rivet / end-plate-retention holes in the hub steel
+    rotor_rivet_diameter: float = 5.0
+    rotor_rivet_pitch_radius: float = 0.0      # 0 => AUTO (hub: shaft surface <-> V-apex, clear of pockets)
+    rotor_keyway_width: float = 0.0       # bore keyway width (0 => pure press/shrink fit, the default)
+    rotor_keyway_depth: float = 0.0       # bore keyway depth into the rotor steel
+
+    # --- shaft -------------------------------------------------------------- #
+    shaft_keyway_width: float = 12.0      # drive-end parallel key (DIN 6885-A) -- 12x8 for a 40 mm seat
+    shaft_keyway_depth: float = 5.0       # keyway depth into the shaft (t1)
+    shaft_keyway_length: float = 18.0     # axial keyway length; CLAMPED to the DE bearing-seat journal
+    shaft_snap_ring_width: float = 2.0    # retaining-ring (DIN 471) groove axial width (0 => none)
+    shaft_snap_ring_depth: float = 1.4    # groove radial depth
+    shaft_oil_hole_count: int = 4         # RADIAL oil cross-holes (hollow-shaft rotor cooling; needs a bore)
+    shaft_oil_hole_diameter: float = 4.0
+
+    # --- housing / cooling jacket ------------------------------------------- #
+    housing_flange_thickness: float = 12.0     # mounting-flange axial thickness at EACH end (0 => no flanges)
+    housing_flange_od_margin: float = 30.0     # flange lip: flange OD = jacket OD + 2*this (hosts the bolt circles)
+    housing_mount_bolt_count: int = 8          # DE flange-to-gearbox mounting bolt circle (through)
+    housing_mount_bolt_diameter: float = 11.0  # clearance hole (M10 -> 11)
+    housing_endshield_bolt_count: int = 8      # end-shield / bearing-cap bolt circle in BOTH flanges (through)
+    housing_endshield_bolt_diameter: float = 7.0   # clearance hole (M6 -> 6.6/7)
+    housing_coolant_port_diameter: float = 12.0    # RADIAL inlet + outlet ports (2; 0 => none)
+    housing_terminal_diameter: float = 28.0        # RADIAL power-terminal / cable lead-through (0 => none)
+    housing_terminal_boss: float = 8.0             # raised cast pad height around the terminal (0 => flush)
+    housing_lifting_hole_diameter: float = 11.0    # RADIAL tapped lifting-eye hole on top (M10; 0 => none)
+
+    # --- end-shields / bearing caps (separate cast parts bolted to the flanges) --- #
+    endshield_enabled: bool = True        # model the DE + NDE end-shields as real bodies
+    endshield_thickness: float = 14.0     # axial thickness of the end-shield plate
+    endshield_bearing_bore: float = 80.0  # central bearing-OD seat bore (40 mm-bore bearing -> ~80 mm OD)
 
 
 @dataclass
@@ -124,6 +192,7 @@ class MotorParams:
     rotor: RotorParams = field(default_factory=RotorParams)
     shaft: ShaftParams = field(default_factory=ShaftParams)
     cooling: CoolingParams = field(default_factory=CoolingParams)
+    assembly: AssemblyParams = field(default_factory=AssemblyParams)
     material: MaterialParams = field(default_factory=MaterialParams)
 
     # -- serialisation ----------------------------------------------------- #
@@ -182,7 +251,7 @@ class MotorParams:
         the generated body remains editable. Names are NX-expression safe
         (``group_field``)."""
         out: List[Tuple[str, float, str]] = [("stack_length", self.stack_length, "mm")]
-        for group_name in ("stator", "winding", "rotor", "shaft", "cooling"):
+        for group_name in ("stator", "winding", "rotor", "shaft", "cooling", "assembly"):
             group = getattr(self, group_name)
             for f in fields(group):
                 val = getattr(group, f.name)
@@ -206,6 +275,7 @@ _GROUP_TYPES = {
     "rotor": RotorParams,
     "shaft": ShaftParams,
     "cooling": CoolingParams,
+    "assembly": AssemblyParams,
     "material": MaterialParams,
 }
 

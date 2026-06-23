@@ -10,9 +10,9 @@ from motor_nx import drawings  # noqa: E402
 from motor_nx.params import MotorParams  # noqa: E402
 
 
-def test_three_sheets():
+def test_five_sheets():
     sheets = drawings.all_sheets(MotorParams())
-    assert set(sheets) == {"1_assembly", "2_stator", "3_rotor"}
+    assert set(sheets) == {"1_assembly", "2_stator", "3_rotor", "4_shaft", "5_exploded"}
     for d in sheets.values():
         assert d.ents, "sheet should have entities"
 
@@ -30,10 +30,14 @@ def test_dxf_well_formed():
 
 
 def test_svg_well_formed():
-    for d in drawings.all_sheets(MotorParams()).values():
+    sheets = drawings.all_sheets(MotorParams())
+    for key, d in sheets.items():
         svg = d.to_svg()
         assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>")
-        assert "<text" in svg and "<circle" in svg
+        assert "<text" in svg
+        # the radial cross-section sheets carry circles; shaft + exploded are side views
+        if key in ("1_assembly", "2_stator", "3_rotor"):
+            assert "<circle" in svg, key
 
 
 def test_dimensions_and_arrowheads_present():
@@ -65,10 +69,10 @@ def test_write_drawings(tmp_path=None):
     import tempfile
     out = tempfile.mkdtemp()
     written = drawings.write_drawings(MotorParams(), out, "2026-01-01")
-    assert len(written) == 6            # 3 sheets x (dxf + svg)
+    assert len(written) == 10           # 5 sheets x (dxf + svg)
     assert all(os.path.getsize(p) > 0 for p in written)
-    assert sum(p.endswith(".dxf") for p in written) == 3
-    assert sum(p.endswith(".svg") for p in written) == 3
+    assert sum(p.endswith(".dxf") for p in written) == 5
+    assert sum(p.endswith(".svg") for p in written) == 5
 
 
 if __name__ == "__main__":

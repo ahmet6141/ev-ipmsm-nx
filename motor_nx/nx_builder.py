@@ -19,6 +19,12 @@ Design of the builder
     * The single global "stack_length" expression drives the axial length of the
       active-stack features, so editing it in NX + Update rescales the stack -- a
       taste of in-NX associativity on top of the regenerate-from-params workflow.
+    * Build-step kinds: tube / cylinder / extrude / revolve (all on +Z) and "hole"
+      (a cylindrical cut on an ARBITRARY axis -- radial coolant/terminal/lifting
+      ports and hollow-shaft oil cross-holes). The "hole" branch reuses the proven
+      extrude+boolean path with a caller-supplied direction; CONFIRM it on the next
+      in-NX smoke run (the manufacturing-assembly features were added after the
+      last verified NX 1900..2406 pass -- see docs/NX_AUTOMATION.md).
 """
 
 import json
@@ -137,6 +143,8 @@ class MotorBuilder:
         # confirms it) for a lighter feature tree.
         self.use_nx_patterns = use_nx_patterns
         self.bodies = {}        # step id -> NXOpen.Body
+        self._role_counts = {}  # role -> running count, for unique body names
+        self._named = []        # every body name actually applied (for a build-log summary)
         self.errors = []
         self.lw = _log_window()
         self._z_axis = None
@@ -220,6 +228,48 @@ class MotorBuilder:
         xdir = _v3(1.0, 0.0, 0.0)
         ydir = _v3(0.0, 1.0, 0.0)
         return self.part.Curves.CreateArc(c, xdir, ydir, float(radius), 0.0, 2.0 * math.pi)
+
+    @staticmethod
+    def _perp_basis(axis):
+        """Two orthonormal vectors (u, v) spanning the plane perpendicular to
+        `axis`, plus the normalised axis -- used to draw a circle on an arbitrary
+        plane (radial / oil-hole 'hole' steps)."""
+        ax, ay, az = axis
+        n = math.sqrt(ax * ax + ay * ay + az * az) or 1.0
+        ax, ay, az = ax / n, ay / n, az / n
+        helper = (0.0, 0.0, 1.0) if abs(az) < 0.9 else (1.0, 0.0, 0.0)
+        ux = ay * helper[2] - az * helper[1]
+        uy = az * helper[0] - ax * helper[2]
+        uz = ax * helper[1] - ay * helper[0]
+        un = math.sqrt(ux * ux + uy * uy + uz * uz) or 1.0
+        ux, uy, uz = ux / un, uy / un, uz / un
+        vx = ay * uz - az * uy
+        vy = az * ux - ax * uz
+        vz = ax * uy - ay * ux
+        return (ux, uy, uz), (vx, vy, vz), (ax, ay, az)
+
+    def _circle_curve_on_axis(self, base, axis, radius):
+        """A full circle of `radius` centred at `base`, in the plane normal to `axis`."""
+        u, v, _ = self._perp_basis(axis)
+        return self.part.Curves.CreateArc(
+            _p3(*base), _v3(*u), _v3(*v), float(radius), 0.0, 2.0 * math.pi)
+
+    def _extrude_on_axis(self, curves, base, axis, length, op, target_body):
+        """Extrude a closed curve loop along an ARBITRARY axis (not just +Z).
+        Mirrors :meth:`_extrude` but with a caller-supplied direction -- the radial
+        'hole' primitive (ports, oil cross-holes) needs a non-Z extrude."""
+        ext = self.part.Features.CreateExtrudeBuilder(NXOpen.Features.Feature.Null)
+        ext.Section = self._section(curves)
+        ext.Direction = self.part.Directions.CreateDirection(
+            _p3(*base), _v3(*axis), NXOpen.SmartObject.UpdateOption.WithinModeling)
+        ext.Limits.StartExtend.Value.RightHandSide = "0"
+        ext.Limits.EndExtend.Value.RightHandSide = repr(float(length))
+        ext.BooleanOperation.Type = self._bool_type(op)
+        if target_body is not None and op in ("subtract", "unite"):
+            ext.BooleanOperation.SetTargetBodies([target_body])
+        feat = ext.CommitFeature()
+        ext.Destroy()
+        return feat
 
     def _section(self, curves):
         section = self.part.Sections.CreateSection(0.0095, _TOL, 0.5)
@@ -312,6 +362,33 @@ class MotorBuilder:
         """Register a created body. The first instance keeps the step id (so later
         booleans can target it); extra pattern instances get a derived id."""
         self.bodies[step_id if i == 0 else "%s#%d" % (step_id, i)] = body
+        self._name_body(step_id, i, body)
+
+    def _name_body(self, step_id, i, body):
+        """Give each solid body a material-role DISPLAY NAME so the FEA pre/post can
+        select bodies by role and assign materials / build mesh collectors without
+        hand-identifying every body. Names: STATOR_STEEL, ROTOR_STEEL, MAGNET_nnn,
+        COIL_nnn, SHAFT, HOUSING. Single-body roles drop the index. NXOpen Body.SetName
+        is guarded -- a failure is advisory (the body still builds)."""
+        if body is None:
+            return
+        role = _ROLE_NAME.get(_component_of(step_id))
+        if role is None:
+            return
+        singular = role in ("STATOR_STEEL", "ROTOR_STEEL", "SHAFT", "HOUSING")
+        if singular:
+            name = role
+        else:
+            # a running per-role counter -> globally-unique MAGNET_000.., COIL_000..
+            # (several build-steps map to the same role, so the per-step index would clash)
+            n = self._role_counts.get(role, 0)
+            self._role_counts[role] = n + 1
+            name = "%s_%03d" % (role, n)
+        try:
+            body.SetName(name)
+            self._named.append(name)
+        except Exception as exc:  # advisory -- naming must never abort the build
+            self.errors.append("name %s#%d: %s" % (step_id, i, exc))
 
     # -- per-kind step handlers ------------------------------------------- #
     def build_step(self, step):
@@ -335,6 +412,7 @@ class MotorBuilder:
             inner = self._circle_curve(0.0, 0.0, step["inner_radius"], z0)
             self._extrude([inner], z0, length, "subtract", body, use_stack)
             self.bodies[step["id"]] = body
+            self._name_body(step["id"], 0, body)
 
         elif kind == "cylinder":
             count = int(step.get("pattern_count", 1))
@@ -345,6 +423,7 @@ class MotorBuilder:
                 feat = self._extrude([circ], z0, length, op, target, use_stack)
                 if op == "create":
                     self.bodies[step["id"]] = self._feature_body(feat)
+                    self._name_body(step["id"], 0, self.bodies[step["id"]])
                 self._circular_pattern(feat, count, angle)
             else:  # explicit instances (default, robust)
                 for i in range(max(1, count)):
@@ -362,6 +441,7 @@ class MotorBuilder:
                 feat = self._extrude(curves, z0, length, op, target, use_stack)
                 if op == "create":
                     self.bodies[step["id"]] = self._feature_body(feat)
+                    self._name_body(step["id"], 0, self.bodies[step["id"]])
                 self._circular_pattern(feat, count, angle)
             else:  # explicit instances (default, robust)
                 for i in range(max(1, count)):
@@ -379,6 +459,25 @@ class MotorBuilder:
                                  angle_deg=float(step.get("angle_deg", 360.0)))
             if op == "create":
                 self.bodies[step["id"]] = self._feature_body(feat)
+                self._name_body(step["id"], 0, self.bodies[step["id"]])
+
+        elif kind == "hole":
+            # cylindrical hole on an ARBITRARY axis (radial coolant/terminal/lifting
+            # ports, hollow-shaft oil cross-holes). A circular pattern rotates BOTH
+            # the base point and the axis about Z. Holes are cuts -> never registered.
+            count = int(step.get("pattern_count", 1))
+            angle = step.get("pattern_angle_deg", 0.0)
+            bx, by = step.get("cx", 0.0), step.get("cy", 0.0)
+            bz = z0
+            ax, ay, az = step.get("axis", [0.0, 0.0, 1.0])
+            radius = step["outer_radius"]
+            for i in range(max(1, count)):
+                cx, cy = self._rotate2d([[bx, by]], i * angle)[0]
+                rax, ray = self._rotate2d([[ax, ay]], i * angle)[0]
+                base = (cx, cy, bz)
+                axis = (rax, ray, az)
+                circ = self._circle_curve_on_axis(base, axis, radius)
+                self._extrude_on_axis([circ], base, axis, length, op, target)
 
         else:
             raise ValueError("unknown build-step kind: %s" % kind)
@@ -403,6 +502,18 @@ class MotorBuilder:
             _SESSION.SetUndoMark(NXOpen.Session.MarkVisibility.Visible, "final"))
         n_solids = sum(1 for b in self.part.Bodies if b.IsSolidBody)
         self.log("built %d solid bodies, %d step error(s)" % (n_solids, len(self.errors)))
+        # explicit naming confirmation (so the role names are visible in the build log)
+        if self._named:
+            by_role = {}
+            for nm in self._named:
+                key = nm.rsplit("_", 1)[0] if nm[-1:].isdigit() else nm
+                by_role[key] = by_role.get(key, 0) + 1
+            self.log("named %d bodies: %s" % (
+                len(self._named),
+                ", ".join("%dx %s" % (by_role[r], r) for r in sorted(by_role))))
+        else:
+            self.log("WARN no bodies were named -- Body.SetName returned/raised; "
+                     "tell me and I will switch to named LAYERS instead.")
 
     def export_parts(self, base, flavor="ap242"):
         """Export each manufacturable COMPONENT as its own STEP file (piece-by-piece
@@ -459,6 +570,19 @@ def export_step(part, out_path, flavor="ap242", bodies=None):
     sc.Destroy()
 
 
+# material-role display names for FEA body identification (set via Body.SetName so
+# the bodies are selectable by role in NX / the FEM material + mesh-collector setup)
+_ROLE_NAME = {
+    "Stator_Lamination": "STATOR_STEEL",
+    "Rotor_Lamination": "ROTOR_STEEL",
+    "Magnets": "MAGNET",
+    "Winding": "COIL",
+    "Shaft": "SHAFT",
+    "Housing": "HOUSING",
+    "EndShield": "ENDSHIELD",
+}
+
+
 # component grouping for per-part export (by build-step id prefix in the registry)
 def _component_of(step_id):
     base = step_id.split("#")[0]
@@ -472,16 +596,34 @@ def _component_of(step_id):
         return "Winding"
     if base == "shaft":
         return "Shaft"
+    if base.startswith("endshield"):       # end-shield bodies (bolts are subtracts, not registered)
+        return "EndShield"
     if base == "housing":
         return "Housing"
     return None
 
 
-def export_parasolid(part, out_path):
+def export_parasolid(part, out_path, bodies=None):
+    """Export Parasolid (.x_t), selecting ONLY the solid bodies.
+
+    IMPORTANT: select the bodies explicitly (like export_step) -- do NOT export the
+    EntirePart. Each extrude/revolve leaves its section's *dumb construction curves*
+    in the part; EntirePart drags those into the Parasolid translator and trips it
+    ("Modeler error: please report fault"). The fault scales with curve count, so it
+    surfaced once the manufacturing-assembly features added ~40 more sectioned cuts.
+    STEP already selects bodies only -- which is why STEP succeeds where Parasolid
+    EntirePart fails. (Verified failing on real NX 2506; bodies-only is the fix.)"""
     _save(part)
+    if bodies is None:
+        bodies = [b for b in part.Bodies if b.IsSolidBody]
+    if os.path.exists(out_path):
+        try:
+            os.remove(out_path)  # translator / UF ExportData errors if the file exists
+        except OSError:
+            pass
     # NX 2506 uses DexManager.CreateParasolidExporter(); older builds exposed
-    # CreateParasolidCreator(). Try whichever the DexManager provides, then the
-    # always-available UF fallback.
+    # CreateParasolidCreator(). Try whichever the DexManager provides, selecting the
+    # solid bodies (NOT EntirePart); fall back to the UF exporter.
     for factory_name in ("CreateParasolidExporter", "CreateParasolidCreator"):
         factory = getattr(_SESSION.DexManager, factory_name, None)
         if factory is None:
@@ -489,7 +631,8 @@ def export_parasolid(part, out_path):
         try:
             pc = factory()
             pc.ObjectTypes.Solids = True
-            pc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.EntirePart
+            pc.ExportSelectionBlock.SelectionScope = NXOpen.ObjectSelector.Scope.SelectedObjects
+            pc.ExportSelectionBlock.SelectionComp.Add(bodies)
             pc.InputFile = part.FullPath
             pc.OutputFile = out_path
             pc.Commit()
@@ -497,10 +640,10 @@ def export_parasolid(part, out_path):
             return
         except (AttributeError, NXOpen.NXException):
             pass
-    bodies = [b for b in part.Bodies if b.IsSolidBody]
-    if os.path.exists(out_path):
-        os.remove(out_path)  # UF ExportData errors if the file already exists
-    _UF.Ps.ExportData(bodies, out_path)
+    if _UF is None:
+        raise RuntimeError("no Parasolid exporter available (DexManager factories + UF both absent)")
+    # UF Ps.ExportData wants object TAGS (unsigned int), not NXOpen.Body objects.
+    _UF.Ps.ExportData([b.Tag for b in bodies], out_path)
 
 
 # --------------------------------------------------------------------------- #
