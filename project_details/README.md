@@ -17,6 +17,7 @@ adları koddaki gerçek değerlerle birebir tutulur (`motor_nx/params.py`).
 | [01_MIMARI.md](01_MIMARI.md) | Katman mimarisi (params → em_design → blueprint → builder/mfg/drawings/fea) + **klasör haritası** |
 | [02_PARCALAR.md](02_PARCALAR.md) | **Parça parça** şartname: her parçanın geometri + malzeme + üretim yöntemi + **montaj delikleri/özellikleri** + toleransları |
 | [03_MONTAJ_OZELLIKLERI.md](03_MONTAJ_OZELLIKLERI.md) | Her montaj/üretim özelliğinin **kataloğu**: parametre, varsayılan, standart, gerekçe, doğrulama kuralı |
+| [04_AKTARMA_ORGANI.md](04_AKTARMA_ORGANI.md) | Motora bağlanan **aktarma organı** (`driveline_nx`): diferansiyel (open/e-LSD/tork-vektörleme), CV mafsallı yarım akslar, **tekerlek göbeği + bijon bağlantı elemanları** |
 
 ## Diğer belgeler (kök ve docs/)
 
