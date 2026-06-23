@@ -112,11 +112,19 @@ NX kurulu değilken bile `--dry-run` tüm blueprint'leri + doğrulamayı üretir
 python batch_build.py configs/sweep_example.json --dry-run
 ```
 
-Tek bir journal'ı elle de çalıştırabilirsiniz:
+Tek bir journal'ı elle de çalıştırabilirsiniz (export varsayılanı **`step`** = AP242,
+güvenilir; `.prt` + `.stp` üretir):
 
 ```bat
-"%UGII_ROOT_DIR%\run_journal.exe" motor_nx\nx_builder.py -args blueprint.json out.prt both
+"%UGII_ROOT_DIR%\run_journal.exe" motor_nx\nx_builder.py -args blueprint.json out.prt
 ```
+
+> **NX 2506'da BUILD DOĞRULANDI:** varsayılan motor tüm montaj/üretim özellikleriyle
+> **489 katı gövde, 0 hata** kurar (2 end-shield + stub + tüm delikler/flanşlar). STEP
+> export sorunsuz. **Parasolid `.x_t` opt-in'dir** (`... out.prt both`) ve bazı NX
+> kurulumlarında çevirmen hatası verip oturumu bozabilir → atlanır, STEP tam montajı
+> taşır. `.x_t` gerekiyorsa NX GUI'den (File → Export → Parasolid) alın. Modeler hatası
+> görürseniz bir sonraki build'den önce **NX'i yeniden başlatın**.
 
 ---
 
