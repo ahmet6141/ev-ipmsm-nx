@@ -5,8 +5,10 @@ motor_nx.em_design).
 
 First-order closed-form estimates only; the roll-stiffness, damping and wheel-hop
 expressions are deliberately ROUGH (labelled below) -- verify ride/handling with a
-full multibody (ADAMS/Car) model. Spring + damper rates are referred to the wheel
-through the motion ratio.
+full multibody (ADAMS/Car) model. The spring rate is referred to the wheel through
+the motion ratio (wheel rate = spring rate x MR^2); the damper bump rate is used in
+its damper-frame value for the rough damping-ratio estimate (NOT MR-referred), so
+that figure reads high -- refer it through MR^2 for a wheel-frame zeta.
 """
 
 from __future__ import annotations
@@ -72,11 +74,12 @@ def derive(p: SuspensionParams) -> DerivedSuspension:
     crit = 2.0 * math.sqrt(wheel_rate_n_per_m * sprung)
     zeta = (d.bump_rate_ns_per_m / crit) if crit > 0 else float("inf")
 
-    # wheel-hop (unsprung) natural frequency (ROUGH): the tyre and the wheel rate act
-    # in series on the unsprung mass.
-    k_series = (_TYRE_RATE_N_PER_MM * wheel_rate) / max(1e-9, (_TYRE_RATE_N_PER_MM + wheel_rate))
+    # wheel-hop (unsprung) natural frequency (ROUGH): the unsprung mass rides between
+    # the tyre (to ground) and the wheel rate (to the sprung mass), so the two
+    # stiffnesses act in PARALLEL on it -> k_hop = k_tyre + wheel_rate.
+    k_hop = _TYRE_RATE_N_PER_MM + wheel_rate
     unsprung = max(1e-6, m.unsprung_corner_mass_kg)
-    hop_freq = (1.0 / (2.0 * math.pi)) * math.sqrt((k_series * 1.0e3) / unsprung)
+    hop_freq = (1.0 / (2.0 * math.pi)) * math.sqrt((k_hop * 1.0e3) / unsprung)
 
     # representative local-Z build envelope: knuckle height + spring/damper stack
     envelope = max(p.knuckle.height_mm, s.free_length_mm, d.damper_length_mm) + g.ride_height_mm
