@@ -404,6 +404,14 @@ class MotorBuilder:
         use_stack = bool(step.get("drive_with_stack", False))
         if op == "create" and step.get("target"):
             self.errors.append("WARN %s: create op should not target a body" % step["id"])
+        # A subtract/unite whose target body never got created (its create step
+        # failed) would otherwise raise the cryptic "Invalid boolean type". Skip it
+        # with a clear, root-cause-pointing message so one failed create does not
+        # cascade into dozens of misleading errors.
+        if op in ("subtract", "unite") and step.get("target") and target is None:
+            raise RuntimeError(
+                "SKIPPED: target body '%s' does not exist -- its create step failed "
+                "earlier (see the first FAIL above)" % step["target"])
 
         if kind == "tube":
             outer = self._circle_curve(0.0, 0.0, step["outer_radius"], z0)
@@ -502,6 +510,16 @@ class MotorBuilder:
             _SESSION.SetUndoMark(NXOpen.Session.MarkVisibility.Visible, "final"))
         n_solids = sum(1 for b in self.part.Bodies if b.IsSolidBody)
         self.log("built %d solid bodies, %d step error(s)" % (n_solids, len(self.errors)))
+        # Diagnose a corrupted modeling session: if even the basic CREATE steps fault
+        # with the generic Parasolid "please report fault" and NOTHING built, the NX
+        # session itself is poisoned (commonly carried over from a prior Parasolid /
+        # modeler fault in the SAME session). A code bug would fail specific steps,
+        # not every create -- so the fix is to restart NX, not to edit the journal.
+        if n_solids == 0 and any("please report fault" in e.lower() for e in self.errors):
+            self.log("HINT: 0 bodies built and basic CREATE steps hit 'please report fault'. "
+                     "This is a CORRUPTED NX modeling session (often left by a prior modeler/Parasolid "
+                     "fault). Fully CLOSE and RESTART NX (not just replay the journal), then run again. "
+                     "The geometry itself is unchanged and built cleanly in earlier sessions.")
         # explicit naming confirmation (so the role names are visible in the build log)
         if self._named:
             by_role = {}
