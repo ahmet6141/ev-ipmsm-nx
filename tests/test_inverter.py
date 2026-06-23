@@ -84,7 +84,30 @@ def test_default_design_is_buildable():
 
 def test_validate_catches_low_voltage_class():
     p = InverterParams().overridden(**{"power_stage.switch_voltage_class_v": 400.0})
-    assert any("headroom" in i for i in eng.validate(p))
+    assert any("switch_voltage_class_v" in i for i in eng.validate(p))
+
+
+def test_voltage_derate_default_ok():
+    """The default 750 V SiC class clears Vdc/0.7 (571 V) and the 470 V transient."""
+    g = eng.derive(InverterParams())
+    assert g.voltage_derate_ok
+    assert g.min_switch_voltage_class_v == pytest.approx(400.0 / 0.70, rel=1e-3)
+
+
+def test_svpwm_ceiling_is_0707_vdc():
+    """SVPWM (default) reaches 0.707*Vdc LL rms, not the 0.612*Vdc of plain SPWM."""
+    import math
+    g = eng.derive(InverterParams())
+    assert g.inverter_max_ll_v == pytest.approx(400.0 / math.sqrt(2.0), rel=1e-3)
+
+
+def test_regen_clamped_to_motor_capability():
+    """Regen cannot exceed the motor's peak generating capability even if both the
+    setting and the battery limit are raised above it."""
+    p = InverterParams().overridden(**{"regen.max_regen_power_kw": 500.0,
+                                       "regen.battery_charge_limit_kw": 500.0})
+    g = eng.derive(p)
+    assert g.effective_regen_power_kw == pytest.approx(p.motor.peak_power_kw)
 
 
 def test_validate_catches_low_switching_freq():

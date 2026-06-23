@@ -26,6 +26,13 @@ def test_partial_dict_keeps_defaults():
     assert p.differential.final_drive_ratio == 9.0
 
 
+def test_default_halfshaft_has_sound_static_margin():
+    """Half-shafts are fatigue-critical: the default must clear a >= 1.5 static SF."""
+    g = eng.derive(DrivelineParams())
+    assert DrivelineParams().halfshaft.diameter == 36.0
+    assert g.halfshaft_safety_factor >= 1.5
+
+
 def test_overridden_dotted():
     p = DrivelineParams().overridden(**{"differential.type": "elsd",
                                         "wheel_hub.lug_count": 4})

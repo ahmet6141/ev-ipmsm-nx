@@ -16,16 +16,22 @@ from typing import List
 
 from .params import InverterParams
 
-# SVPWM peak line-to-line output as a fraction of Vdc (2/sqrt(3) of the half-bus
-# fundamental peak => 0.612 * Vdc rms LL at the linear-modulation limit).
-_SVPWM_LL_FRACTION = 0.612
-# transient-voltage headroom: the switch blocking class must clear Vdc by this factor.
-_VOLTAGE_HEADROOM = 1.8
+# SVPWM peak line-to-line output as a fraction of Vdc. With space-vector / third-
+# harmonic injection the linear-modulation limit is a phase peak of Vdc/sqrt(3), i.e.
+# an LL rms of Vdc/sqrt(2) = 0.707 * Vdc -- ~15.5% above plain SPWM's 0.612 * Vdc.
+_SVPWM_LL_FRACTION = 1.0 / math.sqrt(2.0)   # 0.707  (SVPWM/THIPWM linear ceiling, LL rms)
+_SPWM_LL_FRACTION = math.sqrt(3.0) / 2.0 / math.sqrt(2.0)   # 0.612  (plain SPWM, LL rms)
+# steady-state device-voltage derating: keep the bus below ~70% of the blocking class,
+# i.e. require Vrated >= Vdc / 0.7. SiC traction practice keeps peak device voltage
+# (Vdc + switching overshoot) well under the rated value; 0.7 leaves room for overshoot.
+_VOLTAGE_DERATE = 0.70
 # switching-frequency rule of thumb: carrier >= this multiple of the max electrical freq.
 _FSW_MULTIPLE = 10.0
 # assumed peak-power conversion efficiency for the rough loss split.
 _PEAK_EFFICIENCY = 0.985
-# rough DC-link rms ripple current as a fraction of the peak phase current amplitude.
+# conservative DC-link rms ripple current as a fraction of the peak phase current
+# amplitude. The true worst case (Kolar) peaks near ~0.46 * i_amp at m~0.6/cos(phi)=1;
+# 0.6 is an intentionally pessimistic bound for first-order capacitor sizing.
 _RIPPLE_FRACTION = 0.6
 
 
@@ -34,7 +40,9 @@ class DerivedInverter:
     # power-device sizing
     peak_phase_current_amp_a: float     # peak phase current amplitude (sqrt2 * rms)
     switch_current_rating_a: float      # required device current rating (with margin)
-    voltage_headroom_v: float           # switch class - Vdc * headroom (>=0 is OK)
+    min_switch_voltage_class_v: float   # required blocking class = Vdc / derate
+    voltage_headroom_v: float           # switch class - required min class (>=0 is OK)
+    voltage_derate_ok: bool             # class clears both derate AND max transient
     # electrical frequency / switching
     max_electrical_freq_hz: float
     min_switching_freq_khz: float       # recommended carrier (>= 10x f_elec)
@@ -62,25 +70,35 @@ def derive(p: InverterParams) -> DerivedInverter:
     i_peak_amp = m.peak_phase_current_arms * math.sqrt(2.0)
     i_switch = i_peak_amp * s.current_margin
 
-    # transient voltage headroom: device blocking class vs Vdc * factor
-    v_headroom = s.switch_voltage_class_v - b.dc_voltage_v * _VOLTAGE_HEADROOM
+    # voltage derating: the blocking class must clear Vdc/0.7 (steady-state derate) AND
+    # exceed the worst-case transient bus voltage (regen / overshoot at the device).
+    v_class_min = b.dc_voltage_v / _VOLTAGE_DERATE
+    v_headroom = s.switch_voltage_class_v - v_class_min
+    v_derate_ok = (s.switch_voltage_class_v >= v_class_min
+                   and s.switch_voltage_class_v > b.max_transient_v)
 
     # max electrical frequency = mech freq * pole pairs; carrier should clear 10x it
     f_elec = (m.max_speed_rpm / 60.0) * m.pole_pairs
     f_sw_min_khz = _FSW_MULTIPLE * f_elec / 1000.0
     fsw_ok = (s.switching_freq_khz * 1000.0) >= (_FSW_MULTIPLE * f_elec)
 
-    # field weakening: back-EMF LL at max speed vs the SVPWM LL output ceiling
+    # field weakening: back-EMF LL at max speed vs the inverter LL output ceiling. The
+    # ceiling depends on the modulation: SVPWM/DPWM reach 0.707*Vdc LL rms, plain SPWM
+    # only 0.612*Vdc.
     backemf_max = m.backemf_v_per_krpm_ll * m.max_speed_rpm / 1000.0
-    inv_max_ll = _SVPWM_LL_FRACTION * b.dc_voltage_v
+    ll_fraction = _SPWM_LL_FRACTION if s.modulation == "SPWM" else _SVPWM_LL_FRACTION
+    inv_max_ll = ll_fraction * b.dc_voltage_v
     fw_ratio = backemf_max / inv_max_ll if inv_max_ll > 0 else float("inf")
 
     # DC-link ripple current (rough) and the required cap ripple rating
     i_ripple = _RIPPLE_FRACTION * i_peak_amp
     cap_ripple = i_ripple * d.ripple_current_margin
 
-    # regen is the lesser of what the inverter allows and what the pack will accept
-    regen_eff = min(r.max_regen_power_kw, r.battery_charge_limit_kw) if r.enabled else 0.0
+    # regen is the lesser of: the inverter regen setting, the pack charge-acceptance,
+    # and the motor's own peak (generating) capability -- it cannot push back more than
+    # the machine can produce nor more than the battery will take.
+    regen_eff = (min(r.max_regen_power_kw, r.battery_charge_limit_kw, m.peak_power_kw)
+                 if r.enabled else 0.0)
 
     # rough loss split at peak power and the resulting cold-plate heat flux
     loss_kw = m.peak_power_kw * (1.0 - _PEAK_EFFICIENCY)
@@ -90,7 +108,9 @@ def derive(p: InverterParams) -> DerivedInverter:
     return DerivedInverter(
         peak_phase_current_amp_a=round(i_peak_amp, 1),
         switch_current_rating_a=round(i_switch, 1),
+        min_switch_voltage_class_v=round(v_class_min, 1),
         voltage_headroom_v=round(v_headroom, 1),
+        voltage_derate_ok=v_derate_ok,
         max_electrical_freq_hz=round(f_elec, 1),
         min_switching_freq_khz=round(f_sw_min_khz, 2),
         switching_freq_adequate=fsw_ok,
@@ -122,10 +142,12 @@ def validate(p: InverterParams) -> List[str]:
     if s.modulation not in ("SVPWM", "SPWM", "DPWM"):
         issues.append("power_stage.modulation '%s' unknown (SVPWM|SPWM|DPWM)" % s.modulation)
 
-    # switch blocking class must clear Vdc with transient headroom
-    if g.voltage_headroom_v < 0.0:
-        issues.append("switch_voltage_class_v %.0f below Vdc x %.1f = %.0f V (insufficient headroom)"
-                      % (s.switch_voltage_class_v, _VOLTAGE_HEADROOM, b.dc_voltage_v * _VOLTAGE_HEADROOM))
+    # switch blocking class must clear the steady-state derate (Vdc/0.7) AND exceed the
+    # worst-case transient bus voltage.
+    if not g.voltage_derate_ok:
+        issues.append("switch_voltage_class_v %.0f below required %.0f V (Vdc/%.2f) or transient %.0f V"
+                      % (s.switch_voltage_class_v, g.min_switch_voltage_class_v,
+                         _VOLTAGE_DERATE, b.max_transient_v))
     # switching frequency must clear 10x the max electrical frequency
     if not g.switching_freq_adequate:
         issues.append("switching_freq_khz %.1f below %.1f kHz (>= 10x f_elec %.0f Hz)"
@@ -184,13 +206,14 @@ def report(p: InverterParams) -> str:
         "  peak phase current       : %.0f A rms -> %.0f A amplitude" % (
             m.peak_phase_current_arms, g.peak_phase_current_amp_a),
         "  switch current rating     : %.0f A  (margin x%.2f)" % (g.switch_current_rating_a, s.current_margin),
-        "  voltage headroom         : %+.0f V  (class %.0f vs Vdc x%.1f)" % (
-            g.voltage_headroom_v, s.switch_voltage_class_v, _VOLTAGE_HEADROOM),
+        "  voltage derating         : class %.0f V vs req %.0f V (Vdc/%.2f), transient %.0f V -> %s" % (
+            s.switch_voltage_class_v, g.min_switch_voltage_class_v, _VOLTAGE_DERATE,
+            b.max_transient_v, "OK" if g.voltage_derate_ok else "INSUFFICIENT"),
         "  max electrical freq      : %.0f Hz  (fsw %.1f kHz, recommend >= %.1f kHz) %s" % (
             g.max_electrical_freq_hz, s.switching_freq_khz, g.min_switching_freq_khz,
             "OK" if g.switching_freq_adequate else "LOW"),
-        "  field weakening          : back-EMF %.0f V LL @ max vs %.0f V SVPWM ceiling -> ratio %.2f %s" % (
-            g.backemf_max_ll_v, g.inverter_max_ll_v, g.field_weakening_ratio,
+        "  field weakening          : back-EMF %.0f V LL @ max vs %.0f V %s ceiling -> ratio %.2f %s" % (
+            g.backemf_max_ll_v, g.inverter_max_ll_v, s.modulation, g.field_weakening_ratio,
             "(FW required)" if g.field_weakening_ratio > 1.0 else "(no FW)"),
         "  DC link                  : %.0f uF %s, ripple ~%.0f A rms (cap rating >= %.0f A)" % (
             d.capacitance_uf, d.cap_technology, g.dc_ripple_current_arms, g.cap_ripple_rating_a),
@@ -200,7 +223,7 @@ def report(p: InverterParams) -> str:
             ctl.scheme, " +MTPA" if ctl.mtpa else "", " +FW" if ctl.field_weakening else "",
             ctl.position_sensor, ctl.functional_safety,
             "STO" if ctl.sto else "no-STO", " +ASC" if ctl.active_short_circuit else ""),
-        "  peak loss / heat flux    : %.2f kW over %.0fx%.0f mm plate -> %.1f W/cm^2" % (
+        "  peak loss / heat flux    : %.2f kW over %.0fx%.0f mm plate -> %.1f W/cm^2 (Tj-coolant path is the real limit)" % (
             g.peak_loss_kw, c.coldplate_length_mm, c.coldplate_width_mm, g.coldplate_heat_flux_w_cm2),
         "  enclosure                : %.0f x %.0f x %.0f mm, %.0f mm wall, %d phase connector(s)%s" % (
             p.enclosure.length_mm, p.enclosure.width_mm, p.enclosure.height_mm, p.enclosure.wall_mm,

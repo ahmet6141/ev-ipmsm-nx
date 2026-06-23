@@ -60,6 +60,13 @@ def test_softer_spring_lowers_ride_frequency():
     assert soft.ride_frequency_hz < stiff.ride_frequency_hz
 
 
+def test_wheel_hop_frequency_in_realistic_band():
+    # unsprung-mass hop: tyre + wheel rate act in PARALLEL -> ~8-16 Hz for a
+    # passenger car (a series model collapses this to an unrealistic ~3 Hz).
+    g = eng.derive(SuspensionParams())
+    assert 8.0 <= g.wheel_hop_frequency_hz <= 16.0
+
+
 def test_default_design_is_buildable():
     assert eng.validate(SuspensionParams()) == []
 

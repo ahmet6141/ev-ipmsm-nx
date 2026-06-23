@@ -69,7 +69,9 @@ class HalfshaftParams:
     """The two drive (half) shafts, each with an inboard tripod (plunging) joint
     and an outboard Rzeppa (fixed) joint. Hollow shafts are lighter + raise the
     first torsional mode (NVH); set bore_diameter = 0 for a solid shaft."""
-    diameter: float = 34.0              # sized so the worst-case wheel torque keeps SF >= 1.2
+    diameter: float = 36.0              # sized so worst-case wheel torque keeps static SF >= 1.5
+                                        # (half-shafts are fatigue-critical; a >1.5 static
+                                        #  margin backstops the separate fatigue check)
     bore_diameter: float = 18.0         # hollow-shaft bore (0 => solid)
     length: float = 520.0               # bar length between the two CV-joint bells
     spline_diameter: float = 28.0       # stub spline into the wheel hub
@@ -119,7 +121,11 @@ class MaterialParams:
     gear_steel: str = "case-carburised 18CrNiMo7-6 (ground teeth)"
     carrier_material: str = "spheroidal-graphite cast iron (GJS-500) / forged"
     hub_material: str = "forged steel hub + cast-Al knuckle interface"
-    halfshaft_shear_allow_mpa: float = 420.0   # allowable torsional shear (with safety)
+    # allowable torsional shear for induction-hardened shaft steel. This is a STATIC
+    # (peak-torque) allowable; half-shafts are fatigue-critical, so the SF computed
+    # against it is a static screen only -- a full design must also pass a fatigue
+    # (e.g. ISO 1099 / load-spectrum) check, which typically governs.
+    halfshaft_shear_allow_mpa: float = 420.0
     gear_steel_density: float = 7850.0
 
 

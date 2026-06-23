@@ -163,9 +163,11 @@ def validate(p: DrivelineParams) -> List[str]:
     if w.bearing_bore_diameter >= w.bearing_outer_diameter:
         issues.append("bearing bore must be smaller than the bearing OD")
 
-    # engineering margins (warnings, not hard stops, but reported)
-    if g.halfshaft_safety_factor < 1.2:
-        issues.append("halfshaft shear safety factor %.2f < 1.2 (increase diameter or reduce bore)"
+    # engineering margins (warnings, not hard stops, but reported). Half-shafts are
+    # fatigue-critical, so this static screen carries a >= 1.5 target (not just > yield);
+    # the governing fatigue check is separate.
+    if g.halfshaft_safety_factor < 1.5:
+        issues.append("halfshaft static shear SF %.2f < 1.5 (fatigue-critical part; increase diameter or reduce bore)"
                       % g.halfshaft_safety_factor)
     return issues
 
@@ -189,8 +191,9 @@ def report(p: DrivelineParams) -> str:
              "elsd": "e-LSD worst-case bias", "torque_vectoring": "TV worst-case bias"}.get(d.type, "bias"),
             _TORQUE_BIAS.get(d.type, 0.5)),
         "  wheel max speed          : %.0f rpm" % g.wheel_max_speed_rpm,
-        "  ring : pinion ratio      : %.2f  (ring PD %.0f / pinion PD %.0f mm)" % (
+        "  ring : pinion ratio      : %.2f  (one representative mesh, ring PD %.0f / pinion PD %.0f mm;" % (
             g.ring_pinion_ratio, d.ring_gear_pitch_diameter, g.input_pinion_pitch_diameter),
+        "                             the %.2f:1 overall ratio is reached over two stages in a real unit)" % g.final_drive_ratio,
         "  ring pitch-line velocity : %.1f m/s @ max speed" % g.pitch_line_velocity_mps,
         "  half-shaft               : %.0f mm OD%s, %.0f mm long" % (
             h.diameter, (" / %.0f mm bore (hollow)" % h.bore_diameter) if h.bore_diameter else " (solid)", h.length),
