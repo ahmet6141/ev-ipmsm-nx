@@ -21,6 +21,7 @@ adları koddaki gerçek değerlerle birebir tutulur (`motor_nx/params.py`).
 | [05_SURUCU_INVERTER.md](05_SURUCU_INVERTER.md) | **Sürücü / inverter** (`inverter_nx`): SiC güç katı, alan-zayıflatma, **rejeneratif fren**, FOC + fonksiyonel güvenlik (ASIL-C/STO), soğutma |
 | [06_SUSPANSIYON.md](06_SUSPANSIYON.md) | **Süspansiyon** (`suspension_nx`): multi-link köşe, tekerlek oranı / sürüş frekansı / yalpa rijitliği, adaptif amortisör — göbek deliği driveline ile uyumlu |
 | [07_SASI.md](07_SASI.md) | **Şasi** (`chassis_nx`): skateboard alüminyum platform, kutu kiriş + batarya tepsisi, kütle + burulma rijitliği tahmini |
+| [08_ARAC_MONTAJI.md](08_ARAC_MONTAJI.md) | **Araç montajı** (`vehicle_nx`): tüm alt sistemleri araç koordinatlarında konumlandırıp birleştiren üst-montaj journal'ı (NX `AddComponent`) |
 
 ## Diğer belgeler (kök ve docs/)
 
