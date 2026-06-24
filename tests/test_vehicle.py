@@ -205,14 +205,16 @@ def test_driveline_and_suspension_hub_coincide_per_corner():
 
 def test_motor_and_driveline_share_axle_x_and_axis():
     """Motor and driveline are co-axial (both Rx(-90)) and on the same axle station;
-    the motor is offset in X/Z by the e-axle placement (parallel-axis final drive)."""
+    the motor is offset in X/Z by the RESOLVED e-axle placement (the gearbox-derived
+    final-drive centre distance, since the defaults are AUTO=0)."""
     p = VehicleParams()
     by = _by_name(asm.build_plan(p))
     drv, mot = by["DRIVELINE_REAR"], by["MOTOR_REAR"]
+    off = asm.motor_offset(p)
     assert _mat_approx(mot["orientation"], drv["orientation"])
     assert _mat_approx(mot["orientation"], asm.rot_x(-90.0))
-    assert mot["origin_mm"][0] == pytest.approx(drv["origin_mm"][0] - p.eaxle.motor_offset_x_mm)
-    assert mot["origin_mm"][2] == pytest.approx(drv["origin_mm"][2] + p.eaxle.motor_offset_z_mm)
+    assert mot["origin_mm"][0] == pytest.approx(drv["origin_mm"][0] - off["dx"])
+    assert mot["origin_mm"][2] == pytest.approx(drv["origin_mm"][2] + off["dz"])
 
 
 # --------------------------------------------------------------------------- #
@@ -261,3 +263,315 @@ def test_awd_validates_and_has_two_e_axles_on_shared_hubs():
 def test_hub_bore_od_consistency_is_checked():
     """The validation reads back both hub-bore ODs; for the defaults they match."""
     assert asm._suspension_hub_bore_od_mm() == pytest.approx(asm._driveline_hub_bore_od_mm())
+
+
+# --------------------------------------------------------------------------- #
+# ICD §7 -- INTEGRATION: connector parts, no interpenetration, real matings
+# --------------------------------------------------------------------------- #
+from vehicle_nx import clearance
+
+
+def test_gearbox_and_subframe_components_present():
+    """The e-axle gearbox connector (per driven axle) and the suspension/e-axle subframe
+    cradle (per axle) are now components of the assembled vehicle (ICD §7.1/§7.2)."""
+    by = _by_name(asm.build_plan(VehicleParams()))
+    assert "GEARBOX_REAR" in by                       # rear-drive default -> rear gearbox
+    assert {"SUBFRAME_FRONT", "SUBFRAME_REAR"} <= set(by)  # 4 corners -> both subframes
+
+
+def test_subframe_front_rear_distinct_part_files_with_axle_variant():
+    """The front/rear subframe are X-mirror variants -> distinct part files, each tagged
+    with the axle variant the assembler builds before generate()."""
+    by = _by_name(asm.build_plan(VehicleParams()))
+    sf, sr = by["SUBFRAME_FRONT"], by["SUBFRAME_REAR"]
+    assert sf["part_file"] != sr["part_file"]
+    assert sf["variant"] == {"axle": "front"}
+    assert sr["variant"] == {"axle": "rear"}
+    assert sf["origin_mm"] == [VehicleParams().layout.wheelbase_mm / 2.0, 0.0, 0.0]
+    assert sr["origin_mm"] == [-VehicleParams().layout.wheelbase_mm / 2.0, 0.0, 0.0]
+    assert sf["orientation"] == asm.identity()        # subframe placed identity per axle
+
+
+def test_subframe_placed_identity_at_axle_station():
+    """The subframe is built in vehicle coords offset by the axle station -> identity."""
+    for c in asm.build_plan(VehicleParams())["components"]:
+        if c["role"] == "subframe":
+            assert c["orientation"] == asm.identity()
+
+
+def test_gearbox_orientation_is_rx_minus90_rz180_orthonormal():
+    """The gearbox uses Rx(-90).Rz(180): local +Z (gear axis) -> vehicle +Y, with the
+    extra flip that bridges motor<->diff. The matrix must be a proper rotation."""
+    R = asm.gearbox_orientation()
+    out = _apply(R, [0.0, 0.0, 1.0])
+    assert out == pytest.approx([0.0, 1.0, 0.0], abs=1e-9)   # gear axis -> +Y
+    # orthonormal columns
+    for j in range(3):
+        col = [R[i][j] for i in range(3)]
+        assert math.sqrt(sum(x * x for x in col)) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_motor_offset_is_gearbox_derived_and_clears_old_overlap():
+    """The motor offset now AUTO-resolves to the gearbox final-drive centre distance
+    (~156 / ~176), well clear of the old 60/110 that drove the motor into the diff."""
+    off = asm.motor_offset(VehicleParams())
+    assert off["dx"] == pytest.approx(155.881, abs=1.0)
+    assert off["dz"] == pytest.approx(176.192, abs=1.0)
+    # the resolved centre distance must exceed the old 125 mm that caused the overlap
+    assert math.hypot(off["dx"], off["dz"]) > 230.0
+
+
+def test_motor_offset_override_takes_precedence():
+    """A non-zero eaxle.motor_offset_* overrides the gearbox-derived AUTO value."""
+    p = VehicleParams().overridden(**{"eaxle.motor_offset_x_mm": 200.0,
+                                      "eaxle.motor_offset_z_mm": 250.0})
+    off = asm.motor_offset(p)
+    assert off["dx"] == pytest.approx(200.0)
+    assert off["dz"] == pytest.approx(250.0)
+
+
+# ---- the headline acceptance check: NO interpenetration -------------------- #
+def test_default_vehicle_has_no_interpenetration():
+    """ICD §7.1/§7.4.1 HEADLINE: no two non-chassis component solids interpenetrate on
+    the default vehicle (the gearbox bridges motor<->diff, the cleared offset removes the
+    old motor/diff overlap)."""
+    assert asm.interpenetration_pairs(VehicleParams()) == []
+
+
+def test_default_vehicle_validate_is_clean():
+    """validate() returns no issues on the default vehicle (all ICD §4 + §7 checks)."""
+    assert asm.validate(VehicleParams()) == []
+
+
+def test_interpenetration_check_fires_on_bad_motor_offset():
+    """Force the OLD 60/110 offset -> the motor is driven back into the differential;
+    the headline interpenetration check must FIRE on the motor<->driveline pair."""
+    bad = VehicleParams().overridden(**{"eaxle.motor_offset_x_mm": 60.0,
+                                        "eaxle.motor_offset_z_mm": 110.0})
+    pairs = asm.interpenetration_pairs(bad)
+    names = {frozenset((h["a"], h["b"])) for h in pairs}
+    assert frozenset(("MOTOR_REAR", "DRIVELINE_REAR")) in names
+    # validate() surfaces it as an ICD §7.1 interpenetration issue
+    assert any("INTERPENETRATION" in i for i in asm.validate(bad))
+
+
+def test_interpenetration_solid_is_tighter_than_whole_part_aabb():
+    """The sampled-solid test (used by validate) clears the default motor<->diff, where a
+    naive whole-part AABB would falsely report overlap -- the motor + ring gear are round
+    bodies offset diagonally, so their squared-off AABBs intersect though the solids do
+    not. This documents WHY the headline check uses the sampled-solid variant."""
+    by = _by_name(asm.build_plan(VehicleParams()))
+    mot, drv = by["MOTOR_REAR"], by["DRIVELINE_REAR"]
+    a = asm.component_world_aabb(mot)
+    b = asm.component_world_aabb(drv)
+    # the conservative whole-part AABBs DO overlap (the artefact)...
+    assert clearance.interpenetrates(a, b)
+    # ...but the sampled-solid test (the real geometry) does NOT.
+    sa = asm._component_solids(mot)
+    sb = asm._component_solids(drv)
+    assert clearance.solids_interpenetrate(sa, sb) is None
+
+
+# ---- mating coincidences (ICD §7.4.2) -------------------------------------- #
+def test_gearbox_output_and_diff_mount_lie_on_the_diff_axis():
+    """The gearbox output coupling + diff-carrier mount are coaxial with the differential
+    axis (vehicle X = axle_x, Z = tyre_radius): they couple to the driveline diff input."""
+    p = VehicleParams()
+    L = p.layout
+    for nm in ("output_coupling_face", "diff_mount_face"):
+        pt = asm.gearbox_iface_world(p, "rear", nm)
+        assert pt[0] == pytest.approx(-L.wheelbase_mm / 2.0, abs=1.0)
+        assert pt[2] == pytest.approx(L.tyre_radius_mm, abs=1.0)
+
+
+def test_gearbox_motor_flange_is_coaxial_with_the_motor():
+    """The gearbox motor-mounting flange axis coincides (in X/Z) with the motor axis /
+    DE flange -- the motor bolts straight onto the gearbox (ICD §7.4.2)."""
+    p = VehicleParams()
+    gb_axis = asm.gearbox_iface_world(p, "rear", "motor_axis")
+    m_face = asm.motor_de_flange_world(p, "rear")
+    assert m_face is not None
+    assert math.hypot(gb_axis[0] - m_face[0], gb_axis[2] - m_face[2]) < asm._MATE_TOL_MM
+
+
+def test_gearbox_motor_flange_face_coincides_in_full_3d():
+    """Review finding 1: the gearbox motor-mounting flange FACE must coincide with the
+    motor DE flange FACE in FULL 3D (incl. the axial Y), not just share the X/Z axis --
+    the motor is placed axially so its DE flange butts the gearbox with no gap."""
+    p = VehicleParams()
+    gb_face = asm.gearbox_iface_world(p, "rear", "motor_flange_face")
+    m_face = asm.motor_de_flange_world(p, "rear")
+    assert m_face is not None
+    assert asm._dist3(gb_face, m_face) < asm._MATE_TOL_MM
+
+
+def test_gearbox_output_couples_to_real_driveline_diff_input():
+    """Review finding 2: the gearbox output coupling must coincide (3D) with the driveline
+    diff INPUT flange the driveline actually models (now coaxial with the diff axis), not
+    merely lie 'on the diff axis' while the driveline input sits 127 mm off-axis."""
+    p = VehicleParams()
+    oc = asm.gearbox_iface_world(p, "rear", "output_coupling_face")
+    di = asm.driveline_diff_input_world(p, "rear")
+    assert di is not None
+    assert asm._dist3(oc, di) < asm._MATE_TOL_MM
+    # the driveline input flange is on the diff axis (X = axle_x, Z = r), not 127 mm off
+    assert di[0] == pytest.approx(-VehicleParams().layout.wheelbase_mm / 2.0, abs=1.0)
+
+
+def test_gearbox_motor_engagement_is_a_flange_touch_not_burial():
+    """Review finding 4: with the motor butting the gearbox flange (not the housing
+    sliding over the motor barrel), the gearbox<->motor AXIAL engagement is a small
+    flange/pilot seating depth, well within the budget -- no deep coaxial burial."""
+    p = VehicleParams()
+    assert asm._mating_engagement_issues(p, "rear") == []
+    from vehicle_nx import clearance
+    by = _by_name(asm.build_plan(p))
+    sg = asm._component_solids(by["GEARBOX_REAR"])
+    sm = asm._component_solids(by["MOTOR_REAR"])
+    eng = clearance.solids_axial_engagement(sg, sm, axis_index=1)
+    assert eng is None or eng <= asm._MATING_ENGAGEMENT_BUDGET_MM
+
+
+def test_vehicle_total_ratio_in_single_speed_band():
+    """Review finding 3: the end-to-end motor->wheel ratio (gearbox x diff) must be the
+    physical ~9-10:1, NOT the ~85:1 the old in-series double-count produced."""
+    p = VehicleParams()
+    total = asm.vehicle_total_ratio(p)
+    assert total is not None
+    assert 8.0 <= total <= 11.0
+    assert not any("REDUCTION" in i for i in asm.validate(p))
+
+
+def test_validate_catches_double_counted_reduction(monkeypatch):
+    """If the differential is wrongly left as a second 9:1 final drive, the vehicle-level
+    total-ratio check fires (the guard that prevents the double-count regressing). Simulate
+    the old in-series ~85:1 by forcing the end-to-end ratio high."""
+    monkeypatch.setattr(asm, "vehicle_total_ratio", lambda p: 84.6)
+    issues = asm.validate(VehicleParams())
+    assert any("REDUCTION" in i for i in issues)
+
+
+def test_subframe_pickups_coincide_with_suspension_inboard_pickups_all_four_corners():
+    """ICD §7.4.2 (the headline fix): the subframe pickup bosses coincide with the
+    suspension inboard hardpoints on ALL FOUR corners (FL, FR, RL, RR) within a tight
+    tolerance. The subframe now DERIVES its bosses from the suspension hardpoint table
+    with the SAME placement convention, so every corner lands on the pickup -- not just
+    the one convention-compatible corner the old (toothless) check exercised, which let
+    three corners drift 225-890 mm."""
+    p = VehicleParams()
+    worst = 0.0
+    for axle in ("front", "rear"):
+        for side, sign in (("l", +1.0), ("r", -1.0)):
+            for nm in ("lower_pickup_fore", "lower_pickup_aft", "upper_pickup_fore",
+                       "upper_pickup_aft", "toe_pickup"):
+                sub = asm.subframe_point_world(p, axle, "pickup", nm, side)
+                sus = asm.suspension_hardpoint_world(p, axle, sign, nm)
+                assert sub is not None and sus is not None
+                d = asm._dist3(sub, sus)
+                worst = max(worst, d)
+                assert d < asm._SUBFRAME_COINCIDENCE_TOL_MM, (
+                    "%s%s %s off by %.1f mm" % (axle, side, nm, d))
+    assert worst < asm._SUBFRAME_COINCIDENCE_TOL_MM
+
+
+def test_subframe_tower_top_coincides_with_damper_top_all_four_corners():
+    """ICD §7.4.2: the subframe shock-tower top supports the suspension damper/strut top
+    (no floating spring) on ALL FOUR corners."""
+    p = VehicleParams()
+    for axle in ("front", "rear"):
+        for side, sign in (("l", +1.0), ("r", -1.0)):
+            sub_t = asm.subframe_point_world(p, axle, "tower", "damper_top", side)
+            sus_t = asm.suspension_hardpoint_world(p, axle, sign, "damper_top")
+            assert sub_t is not None and sus_t is not None
+            assert asm._dist3(sub_t, sus_t) < asm._SUBFRAME_COINCIDENCE_TOL_MM
+
+
+def test_subframe_pads_coincide_with_chassis_pads():
+    """ICD §7.4.2: the subframe chassis-pad flanges land on the chassis rail-top mount
+    pads (rail centre-line |Y| and rail-top Z)."""
+    p = VehicleParams()
+    for s in ("l", "r"):
+        ch = asm.chassis_pad_world("rear", s)
+        assert ch is not None
+        ok = False
+        for fa in ("fore", "aft"):
+            sub = asm.subframe_point_world(p, "rear", "pad", fa, s)
+            if (abs(abs(sub[1]) - abs(ch[1])) < asm._MATE_TOL_MM
+                    and abs(sub[2] - ch[2]) < asm._MATE_TOL_MM):
+                ok = True
+        assert ok
+
+
+def test_gearbox_diff_origin_shared_is_allowed_but_other_origins_unique():
+    """The gearbox + driveline intentionally share the diff-axis origin (coaxial
+    connector) -- that pair is exempt from the shared-origin rule, but no OTHER
+    non-chassis pair may share an origin."""
+    assert not any("share an origin" in i for i in asm.validate(VehicleParams()))
+
+
+# ---- the clearance utility itself ------------------------------------------ #
+def test_clearance_local_bbox_skips_subtract_bodies():
+    """local_bbox bounds only create/unite bodies; a subtract-only blueprint has no
+    solid envelope (returns None)."""
+    only_cut = {"build_steps": [
+        {"kind": "cylinder", "boolean": "subtract", "outer_radius": 10.0,
+         "cx": 0.0, "cy": 0.0, "z0": 0.0, "length": 5.0, "axis": (0, 0, 1)}]}
+    assert clearance.local_bbox(only_cut) is None
+    solid = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 10.0,
+         "cx": 0.0, "cy": 0.0, "z0": 0.0, "length": 5.0, "axis": (0, 0, 1)}]}
+    lo, hi = clearance.local_bbox(solid)
+    assert lo == pytest.approx([-10.0, -10.0, 0.0])
+    assert hi == pytest.approx([10.0, 10.0, 5.0])
+
+
+def test_clearance_world_aabb_translates_by_origin():
+    """world_aabb offsets the local box by the placement origin (identity rotation)."""
+    solid = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 5.0,
+         "cx": 0.0, "cy": 0.0, "z0": 0.0, "length": 4.0, "axis": (0, 0, 1)}]}
+    lo, hi = clearance.world_aabb(solid, asm.identity(), [100.0, 0.0, 0.0])
+    assert lo == pytest.approx([95.0, -5.0, 0.0])
+    assert hi == pytest.approx([105.0, 5.0, 4.0])
+
+
+def test_clearance_overlap_and_touch_tolerance():
+    """overlap reports the per-axis intersection; a few-mm touch is NOT interpenetration
+    but a deep overlap is."""
+    a = ([0.0, 0.0, 0.0], [10.0, 10.0, 10.0])
+    near = ([9.0, 0.0, 0.0], [19.0, 10.0, 10.0])     # 1 mm overlap in X
+    deep = ([5.0, 5.0, 5.0], [15.0, 15.0, 15.0])     # 5 mm overlap on all axes
+    assert clearance.overlap(a, near)[0] == pytest.approx(1.0)
+    assert not clearance.interpenetrates(a, near)    # 1 mm < touch tol
+    assert clearance.interpenetrates(a, deep)
+
+
+def test_clearance_solids_parallel_cylinders_clear_when_offset():
+    """Two parallel cylinders whose centres are offset by more than the radius sum CLEAR
+    even though their squared AABBs overlap -- the sampled-solid test resolves this."""
+    cyl_a = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 50.0,
+         "origin3": (0.0, 0.0, 0.0), "axis": (0, 0, 1), "length": 100.0}]}
+    cyl_b = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 50.0,
+         "origin3": (80.0, 80.0, 0.0), "axis": (0, 0, 1), "length": 100.0}]}
+    sa = clearance.part_solids(cyl_a, asm.identity(), [0.0, 0.0, 0.0])
+    sb = clearance.part_solids(cyl_b, asm.identity(), [0.0, 0.0, 0.0])
+    # centre distance 113 > radius sum 100 -> clear, though the AABBs overlap
+    aabb_a = clearance.world_aabb(cyl_a, asm.identity(), [0.0, 0.0, 0.0])
+    aabb_b = clearance.world_aabb(cyl_b, asm.identity(), [0.0, 0.0, 0.0])
+    assert clearance.interpenetrates(aabb_a, aabb_b)       # AABB artefact
+    assert clearance.solids_interpenetrate(sa, sb) is None  # but the solids clear
+
+
+def test_clearance_solids_overlapping_cylinders_clash():
+    """Two coaxial-ish cylinders that genuinely overlap ARE reported as interpenetrating."""
+    cyl_a = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 50.0,
+         "origin3": (0.0, 0.0, 0.0), "axis": (0, 0, 1), "length": 100.0}]}
+    cyl_b = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 50.0,
+         "origin3": (20.0, 0.0, 0.0), "axis": (0, 0, 1), "length": 100.0}]}
+    sa = clearance.part_solids(cyl_a, asm.identity(), [0.0, 0.0, 0.0])
+    sb = clearance.part_solids(cyl_b, asm.identity(), [0.0, 0.0, 0.0])
+    assert clearance.solids_interpenetrate(sa, sb) is not None

@@ -3,9 +3,13 @@
     "%UGII_ROOT_DIR%\\run_journal.exe" vehicle_nx\\nx_assembler.py -args [plan.json] [vehicle.prt] [build|nobuild]
 
 Two stages:
-  1. BUILD each subsystem part (motor / driveline / inverter / suspension / chassis)
-     from its own blueprint, reusing motor_nx's hardened NXOpen engine -- each saved
-     as its own .prt. (Skip with "nobuild" if the .prt files already exist.)
+  1. BUILD each subsystem part (motor / driveline / inverter / suspension / chassis +
+     the ICD §7 connectors gearbox and the front/rear subframe variants) from its own
+     blueprint, reusing motor_nx's hardened NXOpen engine -- one build per UNIQUE plan
+     part file, each saved as its own .prt. (Skip with "nobuild" if the .prt files
+     already exist.) The connector blueprints (gearbox_nx / subframe_nx) are pure
+     CPython like the other subsystems; their nx_builder is NEVER imported here (that
+     would auto-run their main() and rebuild them standalone).
   2. ASSEMBLE: create the top vehicle part and Assemblies.AddComponent every part at
      the origin + orientation from the vehicle_nx.assembly PLAN.
 
@@ -45,31 +49,67 @@ def _refresh(pkg):
         del sys.modules[_m]
 
 
-def _subsystem_blueprints():
-    """(role -> (default-part-file-key, blueprint dict)) for every subsystem. Each
-    blueprint layer is pure CPython (no NXOpen), so this runs in-session safely."""
-    _refresh("motor_nx")
-    _refresh("driveline_nx")
-    _refresh("inverter_nx")
-    _refresh("suspension_nx")
-    _refresh("chassis_nx")
-    from motor_nx import blueprint as m_bp
-    from motor_nx.params import MotorParams
-    from driveline_nx import blueprint as d_bp
-    from driveline_nx.params import DrivelineParams
-    from inverter_nx import blueprint as i_bp
-    from inverter_nx.params import InverterParams
-    from suspension_nx import blueprint as s_bp
-    from suspension_nx.params import SuspensionParams
-    from chassis_nx import blueprint as c_bp
-    from chassis_nx.params import ChassisParams
-    return {
-        "motor": m_bp.generate(MotorParams()),
-        "driveline": d_bp.generate(DrivelineParams()),
-        "inverter": i_bp.generate(InverterParams()),
-        "suspension": s_bp.generate(SuspensionParams()),
-        "chassis": c_bp.generate(ChassisParams()),
-    }
+def _role_blueprint(role, variant):
+    """The NX-free blueprint dict for one component role, with any per-component
+    `variant` overrides applied (e.g. the subframe `axle` so the front/rear variants
+    build into distinct .prt files). Each package's blueprint + params layer is
+    pure CPython (no NXOpen), so this runs in-session safely. The connector packages
+    (gearbox_nx / subframe_nx) expose the SAME blueprint.generate(params) contract; we do
+    NOT import their nx_builder, which would auto-run main() in any NX session and rebuild
+    that subsystem standalone."""
+    variant = variant or {}
+    if role == "motor":
+        from motor_nx import blueprint as bp
+        from motor_nx.params import MotorParams
+        return bp.generate(MotorParams())
+    if role == "driveline":
+        from driveline_nx import blueprint as bp
+        from driveline_nx.params import DrivelineParams
+        return bp.generate(DrivelineParams())
+    if role == "inverter":
+        from inverter_nx import blueprint as bp
+        from inverter_nx.params import InverterParams
+        return bp.generate(InverterParams())
+    if role == "suspension":
+        from suspension_nx import blueprint as bp
+        from suspension_nx.params import SuspensionParams
+        return bp.generate(SuspensionParams())
+    if role == "chassis":
+        from chassis_nx import blueprint as bp
+        from chassis_nx.params import ChassisParams
+        return bp.generate(ChassisParams())
+    if role == "gearbox":
+        from gearbox_nx import blueprint as bp
+        from gearbox_nx.params import GearboxParams
+        return bp.generate(GearboxParams())
+    if role == "subframe":
+        from subframe_nx import blueprint as bp
+        from subframe_nx.params import SubframeParams
+        sp = SubframeParams()
+        if variant.get("axle"):
+            sp = sp.overridden(**{"axle": variant["axle"]})
+        return bp.generate(sp)
+    return None
+
+
+def _build_targets(plan):
+    """Distinct (part_file -> (role, variant, blueprint)) build jobs for the plan, one
+    per UNIQUE part file. Two components that share a part file (e.g. both motors in AWD)
+    build it once; front/rear subframe variants have distinct part files so each builds.
+    Packages are refreshed once so edits are picked up between in-session runs."""
+    for pkg in ("motor_nx", "driveline_nx", "inverter_nx", "suspension_nx",
+                "chassis_nx", "gearbox_nx", "subframe_nx"):
+        _refresh(pkg)
+    jobs = {}
+    for c in plan["components"]:
+        pf = c["part_file"]
+        if pf in jobs:
+            continue
+        blue = _role_blueprint(c["role"], c.get("variant"))
+        if blue is None:
+            continue
+        jobs[pf] = (c["role"], c.get("variant"), blue)
+    return jobs
 
 
 def _build_part(blueprint, out_path, log):
@@ -229,15 +269,15 @@ def main():
     for issue in plan.get("validation", []):
         lw.WriteLine("VALIDATION: %s" % issue)
 
-    # stage 1 -- build the subsystem parts (into this package dir, matching the plan)
+    # stage 1 -- build the subsystem parts (into this package dir, matching the plan).
+    # One build per UNIQUE part file: shared files (both AWD motors) build once; the
+    # front/rear subframe variants have distinct files so each builds.
     if do_build:
         try:
-            blues = _subsystem_blueprints()
-            wanted = {c["role"] for c in plan["components"]}
-            role_to_file = {c["role"]: _resolve_part(c["part_file"]) for c in plan["components"]}
-            for role, blue in blues.items():
-                if role in wanted:
-                    _build_part(blue, role_to_file[role], lw.WriteLine)
+            for part_file, (role, variant, blue) in _build_targets(plan).items():
+                tag = role + (("[%s]" % variant.get("axle")) if variant and variant.get("axle") else "")
+                lw.WriteLine("--- building %s -> %s ---" % (tag, part_file))
+                _build_part(blue, _resolve_part(part_file), lw.WriteLine)
         except Exception:
             lw.WriteLine("SUBSYSTEM BUILD FAILED:\n" + traceback.format_exc())
 

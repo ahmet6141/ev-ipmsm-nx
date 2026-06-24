@@ -1,11 +1,13 @@
 """vehicle_nx -- top-level VEHICLE ASSEMBLY of all the subsystem parts.
 
 The motor (motor_nx), inverter (inverter_nx), driveline (driveline_nx), suspension
-corners (suspension_nx) and chassis (chassis_nx) are each built as their own NX
-.prt in their own local frame. This package computes WHERE each one goes in the
-vehicle (origin + orientation in vehicle coordinates) and the NX journal
-(`nx_assembler.py`) creates the top assembly and adds every part as a positioned
-component.
+corners (suspension_nx), chassis (chassis_nx) and the two ICD §7 CONNECTOR parts --
+the reduction gearbox (gearbox_nx, bridging motor<->differential) and the
+suspension/e-axle subframe cradle (subframe_nx, closing the chassis<->suspension joint)
+-- are each built as their own NX .prt in their own local frame. This package computes
+WHERE each one goes in the vehicle (origin + orientation in vehicle coordinates) and the
+NX journal (`nx_assembler.py`) creates the top assembly and adds every part as a
+positioned component.
 
 Vehicle coordinate frame (ISO 8855 road-vehicle convention):
     +X = forward (toward the front axle)
@@ -15,8 +17,11 @@ Origin at the chassis centre, mid-wheelbase.
 
 Layers:
     params       -- vehicle layout + per-part placement inputs (JSON-serialisable)
+    clearance    -- NX-independent vehicle-frame AABB + sampled-solid overlap check
+                    (the ICD §7 no-interpenetration acceptance test)
     assembly     -- NX-independent placement math: the assembly PLAN (part + 4x4
-                    transform per component) + validate() + report()
+                    transform per component) + validate() (incl. the ICD §7 checks) +
+                    report()
     nx_assembler -- the Siemens NX journal: build each subsystem part, then
                     Assemblies.AddComponent each with its computed transform
     cli          -- NX-independent: plan / report / validate

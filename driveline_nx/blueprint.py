@@ -86,9 +86,17 @@ def differential_steps(p: DrivelineParams) -> List[BuildStep]:
             outer_radius=d.side_gear_diameter / 2.0, cx=0.0, cy=0.0,
             z0=z0, length=d.side_gear_length))
 
-    # input pinion + motor-coupling flange (parallel-axis: offset in +X by the
-    # ring+pinion centre distance). The flange bore = the motor drive-stub Ø.
-    offset = 0.5 * (d.ring_gear_pitch_diameter + d.input_pinion_pitch_diameter)
+    # input pinion + coupling flange. With the reduction now living entirely in the
+    # gearbox (ICD §7.1, review finding 3), the differential is a TRUE 1:1 differential
+    # whose input is COAXIAL with the diff/wheel axis -- the gearbox output gear (on the
+    # diff axis) drives the ring directly. So the input flange sits ON the diff axis
+    # (offset 0) and the gearbox output coupling lands on it (review finding 2). A
+    # genuine parallel-axis (offset) input is only modelled when the diff still carries
+    # its own reduction (final_drive_ratio > 1).
+    if d.final_drive_ratio > 1.0 + 1e-6:
+        offset = 0.5 * (d.ring_gear_pitch_diameter + d.input_pinion_pitch_diameter)
+    else:
+        offset = 0.0
     zc = half + d.ring_gear_face_width / 2.0
     steps.append(BuildStep(
         id="diff_input_pinion", role="input_pinion", kind="cylinder", boolean="create",

@@ -35,7 +35,12 @@ class DifferentialParams:
     A `disconnect` decoupler can physically de-clutch the driveline for drag-free
     coasting (range), independent of the diff type."""
     type: str = "torque_vectoring"     # open | elsd | torque_vectoring | spool
-    final_drive_ratio: float = 9.0     # motor rev : wheel rev (single-speed EV)
+    # The differential is a TRUE differential (just splits torque L/R), NOT a second
+    # reduction: the ~9.4:1 final drive lives ENTIRELY in gearbox_nx (ICD §7.1). The
+    # gearbox stage-2 output gear on the diff axis IS the final-drive gear; the diff ring
+    # below is its driven blank, so the ring : input is functionally 1:1 (review finding 3
+    # -- before, this was 9.0 and double-counted the gearbox reduction -> ~85:1 to wheel).
+    final_drive_ratio: float = 1.0     # diff-input rev : wheel rev (open diff, NO reduction)
     disconnect: bool = True            # dog/clutch decoupler for free-wheel coasting
 
     # carrier / case (modelled as a representative tube + side bosses)

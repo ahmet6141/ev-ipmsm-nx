@@ -23,7 +23,9 @@ def test_partial_dict_keeps_defaults():
     p = DrivelineParams.from_dict({"halfshaft": {"diameter": 34.0}})
     assert p.halfshaft.diameter == 34.0
     assert p.halfshaft.length == DrivelineParams().halfshaft.length  # untouched
-    assert p.differential.final_drive_ratio == 9.0
+    # the differential is now a TRUE 1:1 differential -- the ~9.4:1 reduction lives in
+    # gearbox_nx (ICD §7.1, review finding 3), so the diff no longer double-counts it.
+    assert p.differential.final_drive_ratio == 1.0
 
 
 def test_default_halfshaft_has_sound_static_margin():
@@ -52,10 +54,26 @@ def test_expressions_are_numeric_and_unit_tagged():
 # --------------------------------------------------------------------------- #
 # engineering
 # --------------------------------------------------------------------------- #
-def test_torque_multiplies_by_ratio():
+def test_axle_torque_is_gearbox_output_times_diff_ratio():
+    """The differential input is the GEARBOX OUTPUT torque (the reduction is upstream in
+    the gearbox, ICD §7.1 / review finding 3); the diff itself is 1:1, so the axle torque
+    equals the gearbox output torque -- NOT motor_peak x 9 a second time."""
+    from gearbox_nx.engineering import derive as g_derive
+    from gearbox_nx.params import GearboxParams
     p = DrivelineParams()
     g = eng.derive(p)
-    assert g.ring_gear_torque_nm == pytest.approx(p.motor_peak_torque_nm * p.differential.final_drive_ratio, rel=1e-6)
+    gbox_out = g_derive(GearboxParams()).output_torque_nm
+    assert g.input_torque_nm == pytest.approx(gbox_out, rel=1e-3)
+    assert g.ring_gear_torque_nm == pytest.approx(g.input_torque_nm * p.differential.final_drive_ratio, rel=1e-6)
+
+
+def test_total_motor_to_wheel_ratio_is_physical():
+    """gearbox total_ratio x diff ratio must land in the ~9-10:1 single-speed EV band --
+    the reduction is NOT double-counted across the two packages (review finding 3)."""
+    from gearbox_nx.engineering import derive as g_derive
+    from gearbox_nx.params import GearboxParams
+    total = g_derive(GearboxParams()).total_ratio * DrivelineParams().differential.final_drive_ratio
+    assert 8.0 <= total <= 11.0
 
 
 def test_diff_type_biases_per_wheel_torque():
@@ -63,7 +81,7 @@ def test_diff_type_biases_per_wheel_torque():
     g_elsd = eng.derive(DrivelineParams().overridden(**{"differential.type": "elsd"}))
     g_tv = eng.derive(DrivelineParams().overridden(**{"differential.type": "torque_vectoring"}))
     g_spool = eng.derive(DrivelineParams().overridden(**{"differential.type": "spool"}))
-    assert g_open.per_wheel_torque_nm == pytest.approx(g_open.ring_gear_torque_nm * 0.5)
+    assert g_open.per_wheel_torque_nm == pytest.approx(g_open.ring_gear_torque_nm * 0.5, abs=0.1)
     assert g_spool.per_wheel_torque_nm == pytest.approx(g_spool.ring_gear_torque_nm)  # full axle torque
     # a twin-clutch active eDiff (torque_vectoring) can route effectively the WHOLE
     # axle torque to one wheel, so its worst-case bias is the full axle torque -- the
@@ -72,10 +90,16 @@ def test_diff_type_biases_per_wheel_torque():
     assert g_tv.per_wheel_torque_nm == pytest.approx(g_spool.per_wheel_torque_nm)
 
 
-def test_wheel_speed_is_motor_over_ratio():
+def test_wheel_speed_is_gearbox_output_over_diff_ratio():
+    """Wheel speed = gearbox OUTPUT speed / diff ratio (the diff is 1:1, the ~9.4:1
+    reduction is upstream in the gearbox). Before review finding 3 this divided the motor
+    speed by the diff's own 9:1 a SECOND time, giving an impossibly low wheel speed."""
+    from gearbox_nx.engineering import derive as g_derive
+    from gearbox_nx.params import GearboxParams
     p = DrivelineParams()
     g = eng.derive(p)
-    assert g.wheel_max_speed_rpm == pytest.approx(p.motor_max_speed_rpm / p.differential.final_drive_ratio, rel=1e-6)
+    gbox_out_rpm = g_derive(GearboxParams()).output_speed_rpm
+    assert g.wheel_max_speed_rpm == pytest.approx(gbox_out_rpm / p.differential.final_drive_ratio, rel=1e-3)
 
 
 def test_hollow_shaft_raises_stress_vs_solid():

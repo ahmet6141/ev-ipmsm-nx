@@ -86,11 +86,32 @@ class DerivedDriveline:
     sides_modelled: int
 
 
+def _gearbox_output(p: DrivelineParams):
+    """The upstream gearbox OUTPUT torque (Nm) + speed (rpm) the differential is driven
+    by, read from gearbox_nx (the reduction lives there, ICD §7.1 / review finding 3).
+    NX-free deferred import; returns None if the gearbox package is absent so the
+    driveline still derives stand-alone (falling back to the raw motor peak)."""
+    try:
+        from gearbox_nx.engineering import derive as g_derive
+        from gearbox_nx.params import GearboxParams
+        g = g_derive(GearboxParams())
+        return float(g.output_torque_nm), float(g.output_speed_rpm)
+    except Exception:
+        return None
+
+
 def derive(p: DrivelineParams) -> DerivedDriveline:
     d, h, w = p.differential, p.halfshaft, p.wheel_hub
     ratio = d.final_drive_ratio
 
-    input_torque = p.motor_peak_torque_nm
+    # The differential INPUT is the GEARBOX OUTPUT (the reduction is upstream in the
+    # gearbox, ICD §7.1): drive the half-shaft sizing from the real ~4.1 kNm gearbox
+    # output, not the raw motor peak. Falls back to the motor peak if the gearbox package
+    # is unavailable (stand-alone driveline). This removes the old double-count where the
+    # diff re-multiplied the motor peak by its own 9:1 (review finding 3).
+    gb = _gearbox_output(p)
+    input_torque = gb[0] if gb is not None else p.motor_peak_torque_nm
+    input_speed_rpm = gb[1] if gb is not None else p.motor_max_speed_rpm
     ring_torque = input_torque * ratio
     n_sides = 2 if p.sides == "both" else 1
     # per-wheel design torque = ring torque x a worst-case bias factor: an open diff
@@ -99,7 +120,11 @@ def derive(p: DrivelineParams) -> DerivedDriveline:
     bias = _TORQUE_BIAS.get(d.type, 0.5)
     per_wheel = ring_torque * bias
 
-    wheel_max_rpm = p.motor_max_speed_rpm / ratio
+    # wheel speed = the differential INPUT speed / the diff ratio. The input speed is the
+    # GEARBOX OUTPUT speed (already reduced ~9.4:1 upstream); the diff itself is 1:1, so
+    # the wheel turns at the gearbox output speed (review finding 3 -- before, this divided
+    # the motor speed by the diff's own 9:1 a SECOND time).
+    wheel_max_rpm = input_speed_rpm / ratio
 
     # half-shaft torsion: tau = T / Z_p,  Z_p = pi/16 * (D^4 - d^4) / D
     do = h.diameter
@@ -183,8 +208,13 @@ def validate(p: DrivelineParams) -> List[str]:
         issues.append("differential.type '%s' unknown (open|elsd|torque_vectoring|spool)" % d.type)
     if p.sides not in ("both", "left", "right"):
         issues.append("sides '%s' unknown (both|left|right)" % p.sides)
-    if d.final_drive_ratio <= 1.0:
-        issues.append("final_drive_ratio %.2f must be > 1 for a reduction" % d.final_drive_ratio)
+    # The differential is a TRUE differential (the reduction is in the gearbox, ICD §7.1):
+    # final_drive_ratio is 1.0 for an open diff (no reduction). A ratio < 1 (overdrive) is
+    # nonsensical for this driveline; a ratio > 1 means the diff still carries its own
+    # reduction (a stand-alone driveline without the gearbox), which is allowed but the
+    # vehicle assembly's total-ratio check guards against double-counting it.
+    if d.final_drive_ratio < 1.0:
+        issues.append("final_drive_ratio %.2f < 1 (the differential cannot overdrive)" % d.final_drive_ratio)
 
     # carrier wall must leave a bore
     if d.carrier_wall * 2.0 >= d.carrier_outer_diameter:
@@ -252,18 +282,18 @@ def report(p: DrivelineParams) -> str:
     lines = [
         "Driveline design summary -- %s" % p.name,
         "  differential type        : %s%s" % (d.type, "  (+disconnect)" if d.disconnect else ""),
-        "  final drive ratio        : %.2f : 1" % g.final_drive_ratio,
-        "  input torque (motor peak): %.0f Nm @ <= %.0f rpm" % (g.input_torque_nm, p.motor_max_speed_rpm),
-        "  ring-gear torque (total) : %.0f Nm" % g.ring_gear_torque_nm,
+        "  diff ratio (open=1:1)    : %.2f : 1  (the ~9.4:1 reduction is in gearbox_nx, ICD §7.1)" % g.final_drive_ratio,
+        "  input torque (gearbox out): %.0f Nm @ <= %.0f rpm  (diff input = gearbox output)" % (
+            g.input_torque_nm, g.wheel_max_speed_rpm * g.final_drive_ratio),
+        "  axle torque (to the diff): %.0f Nm" % g.ring_gear_torque_nm,
         "  per-wheel torque         : %.0f Nm  (%s, bias %.2f)" % (
             g.per_wheel_torque_nm,
             {"open": "open-diff 50/50 split", "spool": "locked -- full axle torque",
              "elsd": "e-LSD worst-case bias", "torque_vectoring": "TV worst-case bias"}.get(d.type, "bias"),
             _TORQUE_BIAS.get(d.type, 0.5)),
-        "  wheel max speed          : %.0f rpm" % g.wheel_max_speed_rpm,
-        "  ring : pinion ratio      : %.2f  (one representative mesh, ring PD %.0f / pinion PD %.0f mm;" % (
-            g.ring_pinion_ratio, d.ring_gear_pitch_diameter, g.input_pinion_pitch_diameter),
-        "                             the %.2f:1 overall ratio is reached over two stages in a real unit)" % g.final_drive_ratio,
+        "  wheel max speed          : %.0f rpm  (= gearbox output speed; the diff is 1:1)" % g.wheel_max_speed_rpm,
+        "  ring / pinion geometry   : ring PD %.0f / pinion PD %.0f mm (diff bevel set, 1:1 functionally)" % (
+            d.ring_gear_pitch_diameter, g.input_pinion_pitch_diameter),
         "  ring pitch-line velocity : %.1f m/s @ max speed" % g.pitch_line_velocity_mps,
         "  half-shaft               : %.0f mm OD%s, %.0f mm long" % (
             h.diameter, (" / %.0f mm bore (hollow)" % h.bore_diameter) if h.bore_diameter else " (solid)", h.length),

@@ -283,22 +283,29 @@ def test_every_boolean_targets_an_existing_create():
 
 
 def test_links_are_true_3d_not_flat_z_plates():
-    """The redesign forbids flat +Z plates for the links: the arms/toe link must be
-    PRISMS along their true axes (axis not +Z), and the spring/damper axis-placed."""
+    """The redesign forbids flat +Z plates for the links: the control-arm LEGS must be
+    PRISMS along their true 3D axes (axis not a pure +Z column), the toe/tie link a
+    round bar along its true axis, and every spring/damper body axis-placed (origin3
+    set). Ball-joint hub bosses / eye-ends (round) are allowed alongside the legs."""
     blue = bp.generate(SuspensionParams())
-    link_roles = {"lower_arm", "upper_arm", "toe_link"}
-    link_steps = [s for s in blue["build_steps"] if s["role"] in link_roles]
-    assert link_steps
-    for s in link_steps:
-        assert s["kind"] == "prism", s["id"]
+    # the A-arm LEGS (the structural members) are the prisms; assert they are true 3D.
+    leg_steps = [s for s in blue["build_steps"]
+                 if s["role"] in ("lower_arm", "upper_arm") and s["kind"] == "prism"]
+    assert leg_steps
+    for s in leg_steps:
         ax = s["axis"]
-        # a true link runs predominantly inboard (-Y), never a pure +Z column
+        # a true leg runs predominantly inboard (-Y), never a pure +Z column
         assert abs(ax[1]) > 1e-6, s["id"]
         assert not (abs(ax[0]) < 1e-9 and abs(ax[1]) < 1e-9), s["id"]
-    for role in ("spring", "damper"):
+    # every link role is axis-placed along its true 3D axis (origin3 set, never a
+    # legacy +Z column) -- arms, toe link, spring, damper, anti-roll.
+    for role in ("lower_arm", "upper_arm", "toe_link", "spring", "damper", "anti_roll_bar"):
         st = [s for s in blue["build_steps"] if s["role"] == role]
         assert st, role
-        assert st[0].get("origin3") is not None, role  # axis-placed, not a +Z column
+        for s in st:
+            assert s.get("origin3") is not None, s["id"]
+            ax = s["axis"]
+            assert not (abs(ax[0]) < 1e-9 and abs(ax[1]) < 1e-9 and abs(ax[2] - 1.0) < 1e-9), s["id"]
 
 
 def test_hub_bore_is_on_the_lateral_axis_through_origin():
@@ -338,32 +345,47 @@ def test_world_bbox_is_sane_for_every_type():
 
 
 def test_arms_span_hub_to_inboard():
-    """Each control-arm prism must start near the hub (outboard ball joint) and end
-    well inboard (-Y) at its chassis pickup."""
+    """Each control ARM (taken as the whole set of its build steps) must reach from
+    near the hub (its outboard ball-joint boss, only slightly inboard of the hub) to
+    well inboard (-Y) at its chassis pickups -- i.e. the A-arm genuinely spans the
+    corner, it is not a stub near the hub nor a bar floating inboard."""
     p = SuspensionParams()
     blue = bp.generate(p)
-    for s in blue["build_steps"]:
-        if s["role"] in ("lower_arm", "upper_arm"):
-            pts = _step_world_points(s)
-            ys = [q[1] for q in pts]
-            assert max(ys) < 0.0, s["id"]                       # whole arm is inboard of hub
-            assert min(ys) < -0.7 * p.geometry.upper_arm_length_mm, s["id"]
-            # the outboard end is close to the hub centre in the lateral sense
-            assert max(ys) > -1.5 * p.knuckle.width_mm, s["id"]
+    for role, length in (("lower_arm", p.geometry.lower_arm_length_mm),
+                         ("upper_arm", p.geometry.upper_arm_length_mm)):
+        ys = []
+        for s in blue["build_steps"]:
+            if s["role"] == role:
+                ys += [q[1] for q in _step_world_points(s)]
+        assert ys, role
+        assert max(ys) < 0.0, role                 # whole arm is inboard of the hub face
+        assert min(ys) < -0.7 * length, role       # reaches the chassis pickups
+        # the outboard end (ball-joint boss) is close to the hub centre laterally
+        assert max(ys) > -2.0 * p.knuckle.width_mm, role
 
 
 def test_spring_and_damper_are_inclined_and_reach_up():
     """Spring & damper sit at a real inclination (not vertical) and reach from a low
-    seat to a body mount above the hub."""
+    seat (below/at the hub) up to a body mount above the hub. The damper BODY and the
+    COIL turns are all axis-placed along the same inclined working axis."""
     blue = bp.generate(SuspensionParams())
-    for role in ("spring", "damper"):
-        s = [x for x in blue["build_steps"] if x["role"] == role][0]
-        ax = _unit(s["axis"])
-        assert ax[2] > 0.3, role                # predominantly upward
-        # but inclined: a non-trivial lateral/longitudinal component exists
-        assert math.hypot(ax[0], ax[1]) > 0.05, role
-        top_z = s["origin3"][2] + s["length"] * ax[2]
-        assert top_z > 0.0, role                # body mount is above the hub
+    # the damper body cylinder
+    damper = [x for x in blue["build_steps"] if x["id"] == "damper_r"][0]
+    ax = _unit(damper["axis"])
+    assert ax[2] > 0.3                          # predominantly upward
+    assert math.hypot(ax[0], ax[1]) > 0.05      # but inclined (real lean)
+    # the whole coil-over (damper body + rod + top mount) reaches above the hub
+    tops = []
+    for r in ("damper", "spring"):
+        for s in blue["build_steps"]:
+            if s["role"] == r:
+                w = _unit(s["axis"])
+                tops.append(s["origin3"][2] + s["length"] * w[2])
+    assert max(tops) > 0.0                       # body/tower mount is above the hub
+    # the topmost coil turn sits above the hub too (the coil works up to the body)
+    turns = [s for s in blue["build_steps"] if s["role"] == "spring" and "turn" in s["id"]]
+    assert turns
+    assert max(s["origin3"][2] for s in turns) > 0.0
 
 
 def test_macpherson_drops_the_upper_arm_but_keeps_a_strut():
@@ -392,3 +414,127 @@ def test_axle_models_both_corners_mirrored():
 def test_knuckle_carries_a_hub_bore():
     blue = bp.generate(SuspensionParams())
     assert any(s["role"] == "hub_bore_cut" for s in blue["build_steps"])
+
+
+# --------------------------------------------------------------------------- #
+# realism: every link visibly connects its TWO hardpoints (nothing mid-air)
+# --------------------------------------------------------------------------- #
+def _axis_endpoints(s):
+    """The two world endpoints of an axis-placed body (the base origin3 and the far
+    end origin3 + axis*length). Works for the prism legs and the axis-placed
+    cylinders/tubes the redesign uses for every link."""
+    o = tuple(s["origin3"])
+    w = _unit(s["axis"])
+    L = s["length"]
+    return o, (o[0] + w[0] * L, o[1] + w[1] * L, o[2] + w[2] * L)
+
+
+def _near_any(pt, targets, tol):
+    return any(_dist(pt, t) <= tol for t in targets)
+
+
+def test_every_link_spans_its_two_hardpoints():
+    """The redesign's headline realism contract: every structural link's two ENDS sit
+    on its two hardpoints (no link floating in mid-air). Asserted per link from the
+    shared hardpoint table -- the single source of truth -- with a generous tolerance
+    for the section/eye sizes wrapped onto the joints."""
+    p = SuspensionParams()
+    hp = eng.hardpoints(p)
+    blue = bp.generate(p)
+    steps = {s["id"]: s for s in blue["build_steps"]}
+    tol = 40.0  # mm: a ball-joint boss / bushing eye radius around the hardpoint
+
+    # control-arm legs: each leg runs from its inboard pickup to the shared ball joint
+    cases = [
+        ("lower_arm_fore_r_s0", "lower_pickup_fore", "lower_arm_fore_r_s2", "lower_ball_joint"),
+        ("lower_arm_aft_r_s0", "lower_pickup_aft", "lower_arm_aft_r_s2", "lower_ball_joint"),
+        ("upper_arm_fore_r_s0", "upper_pickup_fore", "upper_arm_fore_r_s2", "upper_ball_joint"),
+        ("upper_arm_aft_r_s0", "upper_pickup_aft", "upper_arm_aft_r_s2", "upper_ball_joint"),
+    ]
+    for in_id, in_hp, out_id, out_hp in cases:
+        in_a, _ = _axis_endpoints(steps[in_id])     # leg starts at the inboard pickup
+        _, out_b = _axis_endpoints(steps[out_id])   # last segment ends at the ball joint
+        assert _dist(in_a, hp[in_hp]) <= tol, in_id
+        assert _dist(out_b, hp[out_hp]) <= tol, out_id
+
+    # toe / tie link spans the toe pickup -> toe outboard (steering-arm) point
+    a, b = _axis_endpoints(steps["toe_link_r"])
+    assert _near_any(a, [hp["toe_pickup"], hp["toe_outboard"]], tol)
+    assert _near_any(b, [hp["toe_pickup"], hp["toe_outboard"]], tol)
+
+    # anti-roll drop link spans its two bar/arm hardpoints
+    a, b = _axis_endpoints(steps["antiroll_r"])
+    assert _near_any(a, [hp["arb_link_lower"], hp["arb_link_upper"]], tol)
+    assert _near_any(b, [hp["arb_link_lower"], hp["arb_link_upper"]], tol)
+
+
+def test_coilover_seats_on_the_two_damper_hardpoints():
+    """The coil-over reaches from its lower seat (damper_lower) on the lower arm up to
+    its top mount (damper_top) -- it is not a floating cylinder. Asserted from the
+    hardpoint table."""
+    p = SuspensionParams()
+    hp = eng.hardpoints(p)
+    blue = bp.generate(p)
+    steps = {s["id"]: s for s in blue["build_steps"]}
+    seat, _ = _axis_endpoints(steps["damper_r"])         # damper body base = lower seat
+    _, rod_top = _axis_endpoints(steps["damper_rod_r"])  # rod tip = top mount
+    assert _dist(seat, hp["damper_lower"]) <= 5.0
+    assert _dist(rod_top, hp["damper_top"]) <= 5.0
+
+
+def test_coilover_is_coaxial_spring_around_damper():
+    """The COIL SPRING must be coaxial AROUND the damper: every coil turn is centred on
+    the damper working axis, and the coil bore clears the damper body (the spring
+    wraps the rod, it is not a separate bare tube). The defining realism fix."""
+    blue = bp.generate(SuspensionParams())
+    damper = [s for s in blue["build_steps"] if s["id"] == "damper_r"][0]
+    base = tuple(damper["origin3"])
+    w = _unit(damper["axis"])
+    damper_r = damper["outer_radius"]
+    turns = [s for s in blue["build_steps"] if s["role"] == "spring" and "turn" in s["id"]]
+    assert len(turns) >= 3, "the coil must read as several turns, not one tube"
+
+    def _cross(a, b):
+        return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+    for t in turns:
+        c = tuple(t["origin3"])
+        d = (c[0] - base[0], c[1] - base[1], c[2] - base[2])
+        off = math.sqrt(sum(x * x for x in _cross(d, w)))   # distance of turn centre to axis
+        assert off < 1.0, t["id"]                            # turn centre ON the damper axis
+        # the coil bore is larger than the damper body radius -> it wraps around it
+        assert t["inner_radius"] > damper_r, t["id"]
+        # and the turn axis is the damper axis (concentric, not skew)
+        assert _dist(_unit(t["axis"]), w) < 1e-6, t["id"]
+
+
+def test_knuckle_is_one_cast_body_uniting_features():
+    """The upright reads as ONE cast body: a create plus several UNITE features (hub
+    barrel + web + ball-joint arms + caliper bridge + steering arm), then the hub bore
+    cut -- not a bare box. All unite/subtract target the single knuckle create."""
+    blue = bp.generate(SuspensionParams())
+    knuckle = [s for s in blue["build_steps"] if s["role"] == "knuckle"]
+    creates = [s for s in knuckle if s["boolean"] == "create"]
+    unites = [s for s in knuckle if s["boolean"] == "unite"]
+    assert len(creates) == 1                       # exactly one cast body
+    assert len(unites) >= 3                         # several cast features merged in
+    for s in unites:
+        assert s["target"] == creates[0]["id"]
+    # the hub bore is cut through that same casting
+    bore = [s for s in blue["build_steps"] if s["role"] == "hub_bore_cut"][0]
+    assert bore["boolean"] == "subtract" and bore["target"] == creates[0]["id"]
+
+
+def test_arms_are_a_arms_two_legs_one_ball_joint():
+    """Each control arm is a proper A-ARM: a FORE and an AFT leg that converge on the
+    SAME outboard ball-joint hub boss (not two isolated parallel bars). Asserted by
+    both legs uniting into the one ball-joint hub create."""
+    blue = bp.generate(SuspensionParams())
+    for role, hub_id in (("lower_arm", "lower_arm_hub_r"), ("upper_arm", "upper_arm_hub_r")):
+        legs = [s for s in blue["build_steps"]
+                if s["role"] == role and s["boolean"] == "unite"]
+        fore = [s for s in legs if "fore" in s["id"]]
+        aft = [s for s in legs if "aft" in s["id"]]
+        assert fore and aft, role                   # two distinct legs
+        for s in legs:
+            assert s["target"] == hub_id, s["id"]   # both converge on one ball-joint boss

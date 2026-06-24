@@ -43,21 +43,32 @@ _SUSPENSION_ROLE_NAME = {
 
 def _suspension_component_of(step_id):
     """Group a build-step id into a manufacturable component (per-part STEP export
-    + body naming). Mirrors driveline_nx.nx_builder._driveline_component_of."""
+    + body naming). Mirrors driveline_nx.nx_builder._driveline_component_of.
+
+    The redesign's richer geometry adds per-segment / per-feature ids (the tapered
+    A-arm legs `lower_arm_fore_r_s0`, the cast-upright features `knuckle_web_r` /
+    `knuckle_lbj_arm_r_s1` / `knuckle_steer_arm_r`, the coil-over `damper_rod_r` /
+    `damper_top_mount_r` / `spring_perch_lo_r` / `spring_r_turn3`, and the rod-end
+    eyes `toe_eye_in_r` / `antiroll_eye_lo_r`). Grouping is by id PREFIX (so every
+    such sub-feature lands in the right component), and the corner tag (_l / _r) is
+    detected as a TOKEN anywhere in the id -- not just as a suffix -- so the segmented
+    knuckle ids (... _r _s0) still pick the correct side."""
     base = step_id.split("#")[0]
+    tokens = base.split("_")
+    side = "_L" if "l" in tokens else "_R"     # corner tag token (default right)
     if base.startswith("knuckle") or base.startswith("caliper_mount"):
-        return "Knuckle_L" if base.endswith("_l") else "Knuckle_R"
+        return "Knuckle" + side
     if base.startswith("lower_arm"):
         return "Lower_Arm"
     if base.startswith("upper_arm"):
         return "Upper_Arm"
-    if base.startswith("toe_link"):
+    if base.startswith("toe_link") or base.startswith("toe_eye"):
         return "Toe_Link"
     if base.startswith("spring"):
         return "Spring"
     if base.startswith("damper"):
         return "Damper"
-    if base.startswith("antiroll"):
+    if base.startswith("antiroll"):       # incl. antiroll_eye_* rod-end eyes
         return "Anti_Roll"
     # bushings + ball joints (the inboard pickups / outboard joints), incl. the
     # redesign's per-leg fore/aft variants (lower_bushing_fore_r, upper_balljoint_l).
