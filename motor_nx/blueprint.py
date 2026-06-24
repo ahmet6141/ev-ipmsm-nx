@@ -843,6 +843,17 @@ def iter_cross_section(blueprint: Dict[str, Any], roles: Optional[set] = None):
                 yield role, ("circle", 0.0, 0.0, max(rs))
                 if min(rs) > 1e-6:
                     yield role, ("circle", 0.0, 0.0, min(rs))
+        elif kind == "prism" and st.get("profile"):
+            # A prism extrudes its local (u, v) profile along `axis`. Yield the SECTION
+            # profile itself as a polygon (the (u, v) outline), exactly as the `extrude`
+            # branch yields its XY profile -- this is the prism's true cross-section.
+            # Without this branch the shared projector silently DROPPED every prism, so
+            # any prism-built geometry (chassis rails/crossmembers/tray/crush cans,
+            # suspension links built in TRUE vehicle coords) rendered as a blank section
+            # in preview.py / fea.to_dxf / drawings.py (the adversarial-review finding).
+            base = [(pt[0], pt[1]) for pt in st["profile"]]
+            for i in range(count):
+                yield role, ("polygon", _rotate(base, i * ang))
 
 
 # --------------------------------------------------------------------------- #
