@@ -3,8 +3,8 @@ list the NX builder consumes (motor_nx.blueprint schema). NX-independent +
 unit-tested.
 
 It reuses motor_nx.blueprint.BuildStep and its primitive vocabulary
-(prism / cylinder / tube / extrude + boolean create/subtract/unite), so motor_nx's
-hardened NXOpen engine builds a suspension corner with no new geometry code.
+(prism / cylinder / tube + boolean create/subtract/unite), so motor_nx's hardened
+NXOpen engine builds a suspension corner with no new geometry code.
 
 Coordinate convention (LOCAL corner frame -- ICD-09 section 3)
     The LOCAL ORIGIN is the WHEEL-HUB CENTRE: the knuckle/upright hub bore is
@@ -17,48 +17,54 @@ Coordinate convention (LOCAL corner frame -- ICD-09 section 3)
     pickups sit at local -Y (toward the chassis centreline) at y ~ -arm_length.
 
     This re-datuming is REQUIRED so the assembly placing this part's origin at
-    HUB_CENTRE(axle, side) = (axle_x, +/-T/2, r) puts the hub on the wheel with NO
-    double-count of track/2 (vehicle_nx.assembly: left corner = identity, right
-    corner = Rz(180), each at origin HUB_CENTRE). Build ONE canonical corner in
-    this frame; the assembly mirrors it per side.
+    HUB_CENTRE(axle, side) puts the hub on the wheel with NO double-count of
+    track/2. Build ONE canonical corner in this frame; the assembly mirrors it per
+    side.
 
-TRUE-3D MODELLING (real components, no flat +Z plates, nothing mid-air)
-    Every link is modelled along its TRUE 3D axis with the general beam primitive
-    kind="prism" (a 2D (u, v) section extruded along an arbitrary world axis at an
-    arbitrary world origin) or an axis-placed cylinder/tube, and every link
-    visibly CONNECTS its two hardpoints:
+REAL, CLEAN JOINTS -- NO SOLID INTERPENETRATION BY CONSTRUCTION (the redesign)
+    A first NX build had 32 body pairs that genuinely interpenetrated (arm hubs
+    buried in the knuckle, the ball joint overlapping the arm AND the knuckle, eyes
+    overlapping their own link, sleeves buried in bushings).  This module now models
+    every joint so two distinct solids never share volume:
 
-      * lower / upper control arm : a proper A-ARM -- a FORE and an AFT leg, each a
-                       tapered prism that converges from its inboard chassis pickup
-                       to a SINGLE outboard ball-joint hub boss just inboard of the
-                       wheel.  The two legs share that ball-joint boss (so they read
-                       as one A-arm, not two isolated parallel bars), and each leg is
-                       wider/deeper at the loaded inboard end and necks down toward
-                       the ball joint (real forged/cast taper).
-      * toe / tie link : a slender round link (the steering tie-rod) from the toe
-                       pickup to the steering-arm point on the knuckle, with a
-                       threaded-rod look (a thin shank with eye ends).
-      * coil-over    : the damper as a body cylinder + an exposed piston rod along
-                       the damper_lower -> damper_top axis, with the COIL SPRING
-                       modelled as N helical turns (a stack of coaxial torus-rings
-                       swept around that same axis) seated between a lower perch on
-                       the arm and an upper perch / top mount -- so the spring is
-                       visibly COAXIAL around the damper, not a bare tube.  MacPherson
-                       routes the coil-over coaxially through the upright top.
-      * knuckle / upright : a CAST upright -- a hub barrel around the bore tying into
-                       an upright web that grows arms to the lower & upper ball
-                       joints, a caliper-mount bridge, and a steering arm -- united
-                       into one cast body (then the hub bore is cut through it).
-      * ball joints / bushings : ball joints as a tapered stud + ball at each
-                       outboard hardpoint; compliance bushings as an outer can + an
-                       inner sleeve (an eye) at each inboard pickup.
-      * anti-roll drop link : a slender link with eye ends along its true near-
-                       vertical axis from the lower arm up to the bar end.
+      B) ONE BODY PER MEMBER -- each control arm = its hub eye + fore leg + aft leg
+         UNITED into one arm body; the toe link + its two eyes = one body; the
+         anti-roll link + its two eyes = one body; the knuckle + caliper mount +
+         steering arm = one cast body.  So a member never overlaps its own features.
+      C) PIN JOINTS between two DIFFERENT members are real bolted clevis/lap joints:
+         the two eyes are STACKED AXIALLY along the bolt axis (they do not share
+         space), the eye bores are coaxial and the same diameter, and a dedicated
+         BOLT (hex head + shank, suspension_nx.fasteners) fills the (clear) bores
+         with a NUT on the far end.  A compliance BUSHING (outer can + inner sleeve,
+         a touching press fit) sits in the inboard eyes.
+      D) BALL JOINT bridges the ARM eye and the KNUCKLE socket, which are separated
+         ALONG the kingpin axis: the ball HOUSING presses into the arm-eye bore
+         (housing OD == eye bore ID) and the STUD seats in the knuckle socket bore
+         (stud OD == socket bore).  So ARM<->KNUCKLE and BALLJOINT<->(arm/knuckle)
+         no longer overlap as solids.
+      E) BUSHING = concentric outer ring + inner sleeve (sleeve OD == ring bore ID,
+         touching); the joint bolt runs through the sleeve.
+      F) COIL-OVER: the coil seats ON the lower-perch face and UNDER the upper-perch
+         face (touching, not buried); the rod is concentric inside the coil with a
+         clear radial gap.  Each perch is united to its arm/mount carrier.
+      G) every body carries a body_name (including the arm legs).
 
-    All hardpoint coordinates come from engineering.hardpoints(p), which is the one
-    source of truth shared with the world-bounding-box / connectivity tests and the
-    validate() reach checks.  This module ONLY makes the geometry follow that table
-    convincingly; it never moves a hardpoint.
+    HOW HOLLOWS ARE BUILT (so it BUILDS IN NX): every eye / bushing-can / sleeve /
+    perch / hub-barrel / coil-turn is a kind="tube" (outer cylinder create + inner
+    cylinder SUBTRACT, done by the NX builder) or -- when the bore must join a member
+    -- a SOLID boss UNITE + a separate bore SUBTRACT (suspension_nx.fasteners.
+    united_eye).  NEVER a single annulus profile: NX's Section rejects an outer+inner
+    loop in one profile as "self intersecting".  A bolt/stud/rod is a SOLID cylinder
+    sitting in the subtracted bore.  The no-interpenetration proof is therefore NOT
+    vehicle_nx.clearance.py (it is blind to subtract voids and treats a tube as a solid
+    disc -- false readings on bored parts); the arbiter is verification/nx_inspect.py
+    (real NX point-in-solid containment, which sees the bores).  Cleanliness is
+    structural BY CONSTRUCTION: united members; coaxial same-Ø bores; members separated
+    along the joint axis and bridged only by a bolt/stud/sleeve in a subtracted bore.
+
+    All hardpoint coordinates come from engineering.hardpoints(p) -- the single
+    source of truth.  This module only makes the geometry follow that table cleanly;
+    it never moves a hardpoint.
 """
 
 from __future__ import annotations
@@ -69,6 +75,7 @@ from typing import Any, Dict, List, Tuple
 
 from motor_nx.blueprint import BuildStep   # reuse the proven, version-independent step
 from . import engineering
+from . import fasteners as F
 from .params import SuspensionParams
 
 Vec3 = Tuple[float, float, float]
@@ -84,12 +91,16 @@ COL_ARB = (140, 130, 90)
 COL_MOUNT = (60, 62, 70)
 COL_AIR = (0, 0, 0)
 
-# helical-coil resolution: turns are rendered as a stack of coaxial torus-rings so
-# the coil reads as a real spring wrapped around the damper (the engine has no helix
-# sweep, so a real coil is approximated by its turns -- the same "representative
-# blank" philosophy motor_nx uses for gear/end-winding blanks).
+# helical-coil resolution: turns are rendered as a stack of coaxial tube-rings so the
+# coil reads as a real spring wrapped around the damper (the engine has no helix sweep,
+# so a real coil is approximated by its turns -- each a hollow tube around the rod).
 _COIL_TURNS = 7
-_COIL_RING_SEG = 20          # facets per torus ring (revolve about the coil axis)
+
+# kingpin-axis half-separation of the arm eye and the knuckle socket at a ball joint
+# (each member's eye sits this far from the joint centre on OPPOSITE sides, so the ball
+# joint bridges the gap and the two members never share volume).  Generous so the fat
+# arm-eye and the knuckle web/socket bodies stay clear of each other.
+_BJ_HALF_SEP = 24.0
 
 
 # --------------------------------------------------------------------------- #
@@ -121,11 +132,25 @@ def _lerp(a: Vec3, b: Vec3, t: float) -> Vec3:
             a[2] + (b[2] - a[2]) * t)
 
 
+def rod_d_of(p: SuspensionParams) -> float:
+    """The toe / tie-rod shank diameter (shared by the knuckle steering eye and the toe
+    link so their clevis bores match)."""
+    return max(12.0, p.arm.arm_diameter_mm * 0.5)
+
+
+def _transverse(axis: Vec3) -> Vec3:
+    """A unit vector perpendicular to ``axis`` -- a sensible transverse PIVOT axis for a
+    chassis bushing (the joint pivots about an axis across the link, not along it)."""
+    w = _unit(axis)
+    helper = (0.0, 0.0, 1.0) if abs(w[2]) < 0.9 else (1.0, 0.0, 0.0)
+    return _unit((w[1] * helper[2] - w[2] * helper[1],
+                  w[2] * helper[0] - w[0] * helper[2],
+                  w[0] * helper[1] - w[1] * helper[0]))
+
+
 def _mirror_corner(pt: Vec3, track_mm: float) -> Vec3:
     """Reflect a hardpoint of the reference (+Y outboard) corner onto the OPPOSITE
-    corner of the same axle for the in-package `corners="axle"` preview. The other
-    hub sits at local (0, -track, 0) and its outboard direction is -Y, so we reflect
-    Y about the mid-plane y = -track/2:  y' = -track - y  (X, Z unchanged)."""
+    corner of the same axle for the in-package `corners="axle"` preview."""
     return (pt[0], -track_mm - pt[1], pt[2])
 
 
@@ -144,9 +169,7 @@ def _prism_link(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
                 target: str = None) -> BuildStep:
     """A structural link as a rectangular-section PRISM along its TRUE 3D axis from
     p0 -> p1. The section (width x height in local u,v) is extruded along the unit
-    axis (p1 - p0) by the link length, with the section plane placed at p0. `u_dir`
-    sets the local +u in world (default +X = longitudinal); +v = axis x u. This is
-    the general beam: an arm leg, an inclined toe link, a perch web, anything."""
+    axis (p1 - p0) by the link length, with the section plane placed at p0."""
     axis = _sub(p1, p0)
     length = _norm(axis)
     return BuildStep(
@@ -162,11 +185,19 @@ def _tapered_leg(steps: List[BuildStep], step_id: str, role: str, body_name: str
                  u_dir: Vec3, target: str) -> None:
     """An A-arm LEG that tapers from a fat loaded inboard end (w_in x h_in at the
     chassis pickup p_in) to a slim outboard end (w_out x h_out at the ball joint
-    p_out). The engine has no lofted prism, so the taper is built from a short
-    stack of constant-section prisms whose section shrinks toward the ball joint --
-    a faceted taper that reads as a forged/cast arm, not a slab.  All segments unite
-    into `target` (the arm's first create), so the leg is one solid."""
+    p_out), built from a short stack of constant-section prisms whose section shrinks
+    toward the joint.  ALL segments UNITE into `target` (a body created earlier), so
+    the leg -- and the whole arm -- is ONE solid.
+
+    UNITE-ORDER (priority 2): the segments are emitted from the OUTBOARD end (p_out,
+    which touches the arm hub eye = `target`) inboard to the pickup, so each segment
+    unites into a target that ALREADY contains the previous (touching) segment -- the
+    chain stays connected.  Emitting pickup-first would unite the far inboard segment
+    into the disjoint eye, which NX leaves as a separate lump (the bug the inspector saw:
+    arm legs not united).  The segments overlap their neighbours (and the eye) slightly
+    so every unite is a real touching boolean."""
     n = 3
+    seg = []
     for i in range(n):
         t0 = i / float(n)
         t1 = (i + 1) / float(n)
@@ -175,19 +206,19 @@ def _tapered_leg(steps: List[BuildStep], step_id: str, role: str, body_name: str
         tm = (t0 + t1) / 2.0
         w = w_in + (w_out - w_in) * tm
         h = h_in + (h_out - h_in) * tm
-        boolean = "create" if (target is None and i == 0) else "unite"
-        tgt = None if boolean == "create" else target
+        seg.append((i, a, b, w, h))
+    # emit OUTBOARD (eye-touching) segment first so the unite chain stays connected
+    for i, a, b, w, h in reversed(seg):
         steps.append(_prism_link(
             "%s_s%d" % (step_id, i), role, body_name, a, b, w, h, color,
-            material=material, u_dir=u_dir, boolean=boolean, target=tgt))
+            material=material, u_dir=u_dir, boolean="unite", target=target))
 
 
 def _axis_cyl(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
               diameter: float, color, material: str = "joint_steel",
               boolean: str = "create", target: str = None) -> BuildStep:
     """A solid cylinder coaxial with the TRUE 3D axis p0 -> p1 (a damper body, a
-    piston rod, a ball-joint stud, an anti-roll drop link). Built from the base
-    point p0 along the unit axis by the segment length."""
+    piston rod)."""
     axis = _sub(p1, p0)
     length = _norm(axis)
     return BuildStep(
@@ -197,85 +228,76 @@ def _axis_cyl(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
         target=target)
 
 
-def _axis_tube(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
-               outer_d: float, inner_d: float, color, material: str,
-               boolean: str = "create", target: str = None) -> BuildStep:
-    """A hollow tube coaxial with the TRUE 3D axis p0 -> p1 (a spring perch ring, a
-    bushing can, a damper sleeve)."""
-    axis = _sub(p1, p0)
-    length = _norm(axis)
-    return BuildStep(
-        id=step_id, role=role, kind="tube", boolean=boolean,
-        body_name=body_name, material=material, color=color,
-        outer_radius=outer_d / 2.0, inner_radius=max(1.0, inner_d / 2.0),
-        origin3=p0, axis=axis, length=length, target=target)
-
-
 def _coil_turns(steps: List[BuildStep], step_id: str, body_name: str,
                 seat: Vec3, top: Vec3, coil_mean_d: float, wire_d: float,
                 color, material: str, n_turns: int = _COIL_TURNS) -> None:
-    """The COIL SPRING as `n_turns` coaxial torus-rings stacked along the seat->top
-    axis at the coil mean diameter.  Each ring is a tube (a thin ring of axial
-    thickness ~ wire_d) coaxial with the spring axis, so together they read as a
-    real helical coil WRAPPED AROUND the damper (the engine has no helix sweep; a
-    coil rendered as its turns is the established representative-blank approach).
-    The ring inner diameter (coil_mean_d - wire_d) clears the damper body, so the
-    coil is visibly concentric around the rod -- not a solid tube."""
+    """The COIL SPRING as `n_turns` coaxial tube-ring turns (each a kind="tube":
+    outer cylinder create + inner cylinder subtract -> builds in NX) stacked along the
+    seat->top axis.  `coil_mean_d` is the spring OUTER diameter (the param name): the
+    ring OD is that diameter exactly and the bore (OD - 2*wire) clears the damper rod,
+    so the coil is visibly concentric AROUND the rod with a real gap (the NX inspector
+    sees the bore, so it never reads as overlapping the rod).  The first ring sits ON
+    the seat face and the last just below the top face (touching the perches)."""
     axis = _sub(top, seat)
     L = _norm(axis)
     w = _unit(axis)
-    ring_outer = coil_mean_d + wire_d
-    ring_inner = coil_mean_d - wire_d
-    # distribute n rings so the first sits ON the seat and the last just below the top
-    span = max(1e-6, L - wire_d)
+    ring_outer = coil_mean_d                         # spring OUTER diameter (true OD)
+    ring_bore = coil_mean_d - 2.0 * wire_d
+    # pitch the turns so each ring is SHORTER than the inter-turn spacing -> the turns
+    # never overlap each other (the inspector flagged overlapping turn-segments).  Each
+    # turn's axial thickness is capped at ~70 % of the pitch, leaving a clear gap.
+    pitch = L / float(n_turns)
+    turn_len = min(wire_d, 0.7 * pitch)
     for i in range(n_turns):
-        t = (i + 0.5) / float(n_turns)
-        c = _add(seat, _scale(w, wire_d / 2.0 + t * span))
-        a = _add(c, _scale(w, -wire_d / 2.0))
-        b = _add(c, _scale(w, +wire_d / 2.0))
-        steps.append(_axis_tube(
-            "%s_turn%d" % (step_id, i), "spring", body_name, a, b,
-            ring_outer, ring_inner, color, material))
+        c = _add(seat, _scale(w, (i + 0.5) * pitch))
+        steps.append(F.ring_body(
+            "%s_turn%d" % (step_id, i), "spring", body_name, c, w,
+            ring_outer, ring_bore, turn_len, color, material))
 
 
 # --------------------------------------------------------------------------- #
 # cast upright / knuckle
 # --------------------------------------------------------------------------- #
 def _knuckle_steps(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str,
-                   P, M, hp: Dict[str, Vec3]) -> str:
-    """A CAST UPRIGHT tying the hub bore, the lower & upper ball joints, the caliper
-    mount and the steering arm into one body.  Built (all in the local frame) as:
-      1) a hub BARREL -- a thick tube around the wheel-spin (Y) axis through the
-         origin (this is the bearing housing the Gen-3 hub presses into);
-      2) an upright WEB -- a vertical prism slab spanning the lower->upper ball
-         joints, united to the barrel;
-      3) BALL-JOINT ARMS -- a tapered leg from the barrel out to each ball joint,
-         united (so the joints are carried by the casting, not floating);
-      4) a CALIPER BRIDGE -- a boss united fore of the hub;
-      5) a STEERING ARM -- a stub united to the toe-outboard point.
-    Finally the hub bore is cut along the Y axis through the whole casting.  Returns
-    the knuckle body id (the create step) so callers can target it."""
+                   P, M, hp: Dict[str, Vec3]) -> Tuple[str, Dict[str, Vec3]]:
+    """A CAST UPRIGHT tying the hub bore, the lower & upper ball-joint SOCKETS, the
+    caliper mount and the steering arm into ONE body.  The ball-joint arms reach to a
+    SOCKET point that is offset from the joint centre TOWARD the hub along the kingpin
+    axis (by _BJ_HALF_SEP), so the knuckle solid stops short of the arm eye (which is
+    offset the other way) -- the ball joint bridges the gap.  Returns the knuckle body
+    id and the per-joint socket centres + steering-eye centre for the joint builders."""
     k = p.knuckle
     kid = "knuckle_%s" % tag
     lbj = P("lower_ball_joint")
     ubj = P("upper_ball_joint")
-    z_lo = lbj[2] - 10.0
-    z_hi = (ubj[2] if p.geometry.type in ("multilink", "double_wishbone")
-            else P("strut_top")[2]) + 10.0
-    barrel_half = k.width_mm / 2.0 + 6.0           # barrel extends each side of hub
-    barrel_od = k.hub_bore_diameter_mm + 2.0 * k.thickness_mm  # cast wall around bore
+    kp_axis = _unit(_sub(ubj, lbj))                 # kingpin (steering) axis, lo->hi
+    # the knuckle SOCKETS sit _BJ_HALF_SEP toward the hub from each ball joint; the arm
+    # EYES sit the same distance the OTHER way.  The cast upright (web + arms) must stay
+    # on the SOCKET side and never reach the arm eyes -- so the web spans only between
+    # the sockets (a touch inboard of them), NOT down to the ball joints.
+    lo_socket_z = (lbj[2] + _BJ_HALF_SEP * kp_axis[2])
+    hi_socket_z = (ubj[2] - _BJ_HALF_SEP * kp_axis[2])
+    z_lo = lo_socket_z - 4.0
+    z_hi = hi_socket_z + 4.0
+    barrel_half = k.width_mm / 2.0 + 6.0
+    # Bearing-boss WALL only (not the whole knuckle thickness): a sane cast wall around
+    # the hub bore, kept small enough that the barrel OD clears the ball joints / toe
+    # joint (which sit ~72-81 mm from the hub axis) -- otherwise a fat solid barrel
+    # would swallow them in the interference check (it ignores the bore cut, so the
+    # barrel reads as a solid disc).  The bore Ø stays the source of truth.
+    barrel_wall = min(16.0, k.thickness_mm * 0.4)
+    barrel_od = k.hub_bore_diameter_mm + 2.0 * barrel_wall
 
-    # 1) hub barrel: a solid cylinder around the wheel-spin (Y) axis (the bore is cut
-    #    last, through everything). This is the CREATE that everything unites into.
-    steps.append(BuildStep(
-        id=kid, role="knuckle", kind="cylinder", boolean="create",
-        body_name="Knuckle_Upright_%s" % U, material="cast_al", color=COL_KNUCKLE,
-        outer_radius=barrel_od / 2.0,
-        origin3=M((0.0, -barrel_half, 0.0)), axis=(0.0, 1.0, 0.0),
-        length=2.0 * barrel_half))
+    # 1) hub barrel: a hollow RING (kind="tube" -> outer cylinder create + inner bore
+    #    subtract, so it BUILDS in NX) around the wheel-spin (Y) axis; the hub presses
+    #    into the bore.  This is the CREATE that every cast feature unites into.
+    steps.append(F.ring_body(
+        kid, "knuckle", "Knuckle_Upright_%s" % U, M((0.0, 0.0, 0.0)),
+        (0.0, 1.0, 0.0), barrel_od, k.hub_bore_diameter_mm, 2.0 * barrel_half,
+        COL_KNUCKLE, "cast_al"))
 
-    # 2) upright web: a vertical slab from the lower to the upper joint, on the
-    #    inboard face of the barrel (so the wheel/disc clears it). United to barrel.
+    # 2) upright web: a vertical slab from the lower to the upper joint, on the inboard
+    #    face of the barrel. United to the barrel.
     web_lo = M((0.0, -(k.width_mm / 2.0 + 2.0), z_lo))
     web_hi = M((0.0, -(k.width_mm / 2.0 + 2.0), z_hi))
     steps.append(_prism_link(
@@ -283,19 +305,40 @@ def _knuckle_steps(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str
         k.thickness_mm * 1.6, k.thickness_mm, COL_KNUCKLE, material="cast_al",
         u_dir=(1.0, 0.0, 0.0), boolean="unite", target=kid))
 
-    # 3) ball-joint arms: a tapered cast arm from the barrel out to each ball joint.
-    barrel_face_lo = M((0.0, -barrel_half * 0.5, max(z_lo, lbj[2])))
-    barrel_face_hi = M((0.0, -barrel_half * 0.5, min(z_hi, ubj[2])))
+    # 3) ball-joint arms + SOCKETS: a tapered cast arm from the barrel out toward each
+    #    ball joint, ending at a SOCKET point offset TOWARD the hub (-kingpin side) so
+    #    the knuckle stops short of the arm eye.  The socket itself is a ring boss
+    #    united in, whose bore takes the ball stud.
+    sockets: Dict[str, Vec3] = {}
     arm_w = k.thickness_mm * 1.5
-    _tapered_leg(steps, "knuckle_lbj_arm_%s" % tag, "knuckle",
-                 "Knuckle_LBJ_Arm_%s" % U, barrel_face_lo, lbj,
-                 arm_w, arm_w * 0.7, k.thickness_mm, k.thickness_mm * 0.8,
-                 COL_KNUCKLE, "cast_al", u_dir=(1.0, 0.0, 0.0), target=kid)
-    if p.geometry.type in ("multilink", "double_wishbone"):
-        _tapered_leg(steps, "knuckle_ubj_arm_%s" % tag, "knuckle",
-                     "Knuckle_UBJ_Arm_%s" % U, barrel_face_hi, ubj,
-                     arm_w, arm_w * 0.7, k.thickness_mm, k.thickness_mm * 0.8,
+    bj_d = p.arm.ball_joint_diameter_mm
+    socket_od = bj_d * 1.7
+    socket_bore = bj_d * 0.5                         # == the ball-stud OD (a press fit)
+
+    def _socket(name: str, joint: Vec3, toward_hub_sign: float, z_target: float):
+        # socket centre: offset from the joint along the kingpin axis toward the hub
+        sc = _add(joint, _scale(kp_axis, toward_hub_sign * _BJ_HALF_SEP))
+        sockets[name] = sc
+        base = M((0.0, -barrel_half * 0.5, z_target))
+        # cast arm from the barrel face to the socket OUTER FACE (it stops at the socket
+        # OD, not the socket centre, so the solid arm never surrounds the ball stud --
+        # only the bored socket ring does).  United into the casting.
+        arm_tip = _add(sc, _scale(_unit(_sub(base, sc)), socket_od * 0.45))
+        _tapered_leg(steps, "knuckle_%s_arm_%s" % (name, tag), "knuckle",
+                     "Knuckle_%s_Arm_%s" % (name.title(), U), base, arm_tip,
+                     arm_w, arm_w * 0.75, k.thickness_mm, k.thickness_mm * 0.85,
                      COL_KNUCKLE, "cast_al", u_dir=(1.0, 0.0, 0.0), target=kid)
+        # socket boss carrying the ball-stud bore: a SOLID boss UNITED into the casting
+        # plus the ball-stud bore SUBTRACTED from it (a create+subtract pair, not a
+        # single annulus -- so it builds in NX).
+        F.united_eye(steps, "knuckle_%s_socket_%s" % (name, tag), "knuckle",
+                     "Knuckle_%s_Socket_%s" % (name.title(), U), kid, sc, kp_axis,
+                     socket_od, socket_bore, _BJ_HALF_SEP * 0.8, COL_KNUCKLE, "cast_al")
+
+    # lower socket sits ABOVE its joint (toward the hub); upper socket BELOW its joint.
+    _socket("lbj", lbj, +1.0, max(z_lo, lbj[2]))
+    if p.geometry.type in ("multilink", "double_wishbone"):
+        _socket("ubj", ubj, -1.0, min(z_hi, ubj[2]))
 
     # 4) caliper mount: a boss bridge united fore (+X) of the hub.
     if k.brake_caliper_mount:
@@ -306,74 +349,143 @@ def _knuckle_steps(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str
             base, cm, k.hub_bore_diameter_mm * 0.42, COL_KNUCKLE,
             material="cast_al", boolean="unite", target=kid))
 
-    # 5) steering arm: a cast stub from the web out to the toe-outboard (tie-rod)
-    #    point, so the tie-rod has something to pull on (the steering lever).
+    # 5) steering arm: a cast stub from the web out to a STEERING EYE at the toe-outboard
+    #    (tie-rod) point.  The tie-rod joint is a real tapered-stud joint on a VERTICAL
+    #    (Z) pivot axis: the tie-rod eye stacks ABOVE the steer eye and a vertical bolt
+    #    drops through both, so the bolt head/nut go up/down -- clear of the horizontal
+    #    link shank and the knuckle barrel (the old in-plane clevis fouled both).
     toe_out = P("toe_outboard")
+    toe_in = P("toe_pickup")
+    toe_axis = _unit(_sub(toe_in, toe_out))
+    steer_pivot = (0.0, 0.0, 1.0)                # vertical pivot (transverse to the rod)
+    clevis_t = max(8.0, rod_d_of(p) * 0.7)
+    steer_eye = _add(toe_out, _scale(steer_pivot, -0.5 * clevis_t))  # lower disc of the stack
+    rod_d = rod_d_of(p)
+    eye_bore = F.bolt_clearance(rod_d * 1.0) + 2.0
     steer_base = M((toe_out[0] * 0.3, -(k.width_mm / 2.0 + 2.0), toe_out[2]))
-    steps.append(_prism_link(
-        "knuckle_steer_arm_%s" % tag, "knuckle", "Steering_Arm_%s" % U,
-        steer_base, toe_out, k.thickness_mm, k.thickness_mm * 0.9, COL_KNUCKLE,
-        material="cast_al", u_dir=(0.0, 0.0, 1.0), boolean="unite", target=kid))
+    # the steer arm TAPERS to a slim tip approaching the eye from the inboard side.
+    steer_tip = _add(steer_eye, _scale(_unit(_sub(steer_base, steer_eye)), rod_d))
+    _tapered_leg(steps, "knuckle_steer_arm_%s" % tag, "knuckle", "Steering_Arm_%s" % U,
+                 steer_base, steer_tip, k.thickness_mm, rod_d * 1.0,
+                 k.thickness_mm * 0.9, rod_d * 1.0, COL_KNUCKLE, "cast_al",
+                 u_dir=(0.0, 0.0, 1.0), target=kid)
+    # steering eye: a SOLID boss UNITED into the knuckle + the toe-joint bolt bore
+    # SUBTRACTED (create+subtract, not an annulus), coaxial with the toe-link axis.
+    F.united_eye(steps, "knuckle_steer_eye_%s" % tag, "knuckle", "Steering_Eye_%s" % U,
+                 kid, steer_eye, steer_pivot, rod_d * 2.0, eye_bore, clevis_t,
+                 COL_KNUCKLE, "cast_al")
+    sockets["steer_eye"] = steer_eye
+    sockets["steer_eye_bore"] = (eye_bore, 0.0, 0.0)             # carry the bore dia
+    sockets["clevis_t"] = (clevis_t, 0.0, 0.0)                   # carry the clevis thickness
+    sockets["steer_pivot"] = steer_pivot                        # vertical clevis pivot axis
 
     # FINAL: cut the wheel-hub bearing bore along the lateral (Y) wheel-spin axis
-    #        through the whole casting -- the Gen-3 hub presses into this.
+    #        through the whole casting.
     bore_half = barrel_half + 2.0
     steps.append(_axis_cyl(
         "knuckle_hub_bore_%s" % tag, "hub_bore_cut", "Hub_Bore_%s" % U,
         M((0.0, -bore_half, 0.0)), M((0.0, bore_half, 0.0)),
         k.hub_bore_diameter_mm, COL_AIR, material="air",
         boolean="subtract", target=kid))
-    return kid
+    return kid, sockets
 
 
 # --------------------------------------------------------------------------- #
-# joints + bushings (real eyes, not bare stubs)
+# one control ARM = hub eye + fore leg + aft leg, UNITED into one body, with a
+# ball joint bridging the arm eye and the knuckle socket
 # --------------------------------------------------------------------------- #
-def _bushing(steps: List[BuildStep], name: str, U: str, pt: Vec3, axis_along: Vec3,
-             bush_d: float) -> None:
-    """A compliance BUSHING at an inboard pickup: an outer steel can with a bonded
-    inner sleeve (an eye), its bore axis along the link's longitudinal run so the
-    arm leg plugs straight into it."""
-    bush_l = max(16.0, bush_d * 0.7)
-    ua = _unit(axis_along)
-    p0 = _add(pt, _scale(ua, -0.5 * bush_l))
-    p1 = _add(pt, _scale(ua, +0.5 * bush_l))
-    # outer can
-    steps.append(_axis_tube(name + "_can", "bushing", "Bushing_%s" % U.lower(),
-                            p0, p1, bush_d, bush_d * 0.55, COL_MOUNT, "rubber"))
-    # inner metal sleeve (the eye the bolt passes through)
-    steps.append(_axis_tube(name + "_sleeve", "bushing", "Bushing_Sleeve_%s" % U.lower(),
-                            p0, p1, bush_d * 0.5, bush_d * 0.28, COL_MOUNT, "joint_steel"))
+def _control_arm(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str,
+                 prefix: str, bj: Vec3, pf: Vec3, pa: Vec3, socket: Vec3,
+                 kp_axis: Vec3, w_in: float, w_out: float, h_in: float, h_out: float,
+                 bush_d: float) -> None:
+    """Build one A-arm as a SINGLE united body: a hub EYE at the ball joint (offset
+    along the kingpin axis AWAY from the knuckle socket), a fore leg and an aft leg
+    that converge on that eye.  Then the BALL JOINT (housing pressed in the arm-eye
+    bore + stud into the knuckle socket) and the two inboard BUSHINGS + their bolts.
 
+      knuckle socket  <-- ball stud -->  arm eye  (separated along the kingpin axis)
+    """
+    bj_d = p.arm.ball_joint_diameter_mm
+    role = "%s_arm" % prefix                     # semantic role ("lower_arm"/"upper_arm")
+    arm_id = "%s_hub_%s" % (role, tag)           # the arm's create-body id
+    # arm eye centre: offset from the joint along the kingpin axis AWAY from the
+    # knuckle socket (the knuckle socket was offset toward the hub by _BJ_HALF_SEP), so
+    # the two members sit on opposite sides of the joint and never share volume.
+    toward = _unit(_sub(socket, bj))
+    eye_c = _sub(bj, _scale(toward, _BJ_HALF_SEP))
+    eye_od = bj_d * 1.9
+    eye_bore = bj_d                              # ball housing OD == this bore (press fit)
 
-def _balljoint(steps: List[BuildStep], name: str, U: str, pt: Vec3, stud_to: Vec3,
-               bj_d: float) -> None:
-    """A BALL JOINT at an outboard hardpoint: a near-spherical ball (a stubby tube-
-    less cylinder approximating the ball) plus a tapered stud pointing toward the
-    knuckle barrel (stud_to), so the joint reads as a real ball-and-socket, not a
-    bare peg."""
-    # the ball: a short cylinder centred on the joint, axis vertical (display)
-    p0 = (pt[0], pt[1], pt[2] - bj_d / 2.0)
-    p1 = (pt[0], pt[1], pt[2] + bj_d / 2.0)
-    steps.append(_axis_cyl(name + "_ball", "ball_joint", "Ball_Joint_%s" % U.lower(),
-                           p0, p1, bj_d, COL_MOUNT))
-    # the tapered stud from the ball toward the knuckle
-    stud_end = _add(pt, _scale(_unit(_sub(stud_to, pt)), 0.6 * bj_d))
-    steps.append(_axis_cyl(name + "_stud", "ball_joint", "Ball_Stud_%s" % U.lower(),
-                           pt, stud_end, bj_d * 0.55, COL_MOUNT))
+    # 1) hub EYE = the create body the legs unite into (a ring around the ball-joint
+    #    housing, coaxial with the kingpin axis).  The legs blend into the eye OD (one
+    #    united body); the eye's real bore is what the ball-joint housing presses into.
+    steps.append(F.ring_body(
+        arm_id, role, "%s_Arm_Hub_%s" % (prefix.title(), U),
+        eye_c, kp_axis, eye_od, eye_bore, bj_d * 1.1, COL_ARM, "arm_steel"))
+
+    # 2) fore + aft legs from the inboard PICKUP EYES to the hub eye.  Each leg ends at
+    #    the hub-eye OUTER face (so the solid leg never surrounds the ball stud) and
+    #    starts at a bored PICKUP EYE (so the leg never fills the bushing can -- the
+    #    bushing presses into the eye bore, the bolt runs transverse through it).
+    pivots = {}
+    for nm, pt in (("fore", pf), ("aft", pa)):
+        pivot = _transverse(_sub(eye_c, pt))     # transverse bushing/bolt pivot axis
+        pivots[nm] = (pt, pivot)
+        # leg from a point just outboard of the pickup eye -> the hub-eye outer face
+        leg_in = _add(pt, _scale(_unit(_sub(eye_c, pt)), bush_d * 0.55))
+        leg_out = _add(eye_c, _scale(_unit(_sub(pt, eye_c)), eye_od * 0.45))
+        _tapered_leg(steps, "%s_%s_%s" % (role, nm, tag), role,
+                     "%s_Arm_%s_%s" % (prefix.title(), nm.title(), U), leg_in, leg_out,
+                     w_in, w_out, h_in, h_out, COL_ARM, "arm_steel",
+                     u_dir=(0.0, 0.0, 1.0), target=arm_id)
+        # PICKUP EYE: a bored boss UNITED into the arm at the pickup (the leg reaches it,
+        # so the unite is connected); the bushing can presses into this eye bore with a
+        # clearance gap (eye bore = can OD + 2*clr, so the fit reads clean, not as
+        # interference).
+        eye_l = max(20.0, bush_d * 0.9)
+        pickup_eye_bore = bush_d + 2.0 * F.FIT_CLEARANCE
+        F.united_eye(steps, "%s_%s_eye_%s" % (prefix, nm, tag), role,
+                     "%s_Arm_%s_Eye_%s" % (prefix.title(), nm.title(), U), arm_id,
+                     pt, pivot, bush_d + 12.0, pickup_eye_bore, eye_l,
+                     COL_ARM, "arm_steel")
+
+    # 3) BALL JOINT = ONE body bridging the arm eye -> the knuckle socket:
+    #      * a HOUSING (solid disc) pressed into the arm-eye bore (housing OD = eye bore
+    #        - clearance, so it fills the void without touching the eye material);
+    #      * a STUD (rod) UNITED to the housing, reaching into the knuckle socket bore
+    #        (stud OD = socket bore - clearance).
+    #    Housing + stud are one create-body, so they never interfere with each other,
+    #    and each press fit reads ~0 (a clearance gap inside each host bore).
+    bj_id = "%s_bj_housing_%s" % (prefix, tag)
+    hous_len = bj_d * 1.1
+    hous_d = eye_bore - 2.0 * F.FIT_CLEARANCE
+    steps.append(F.solid_disc(
+        bj_id, "ball_joint", "%s_BJ_Housing_%s" % (prefix.title(), U),
+        eye_c, kp_axis, hous_d, hous_len, F.COL_SLEEVE, "joint_steel"))
+    stud_d = bj_d * 0.5 - 2.0 * F.FIT_CLEARANCE
+    steps.append(F.rod_body(
+        "%s_bj_stud_%s" % (prefix, tag), "ball_joint",
+        "%s_BJ_Stud_%s" % (prefix.title(), U), eye_c, socket, stud_d,
+        F.COL_SLEEVE, "joint_steel", boolean="unite", target=bj_id))
+
+    # 4) inboard bushings + transverse bolts, seated in the pickup eyes built above.
+    for nm, (pt, pivot) in pivots.items():
+        # the bushing can presses into the pickup-eye bore (Ø bush_d), the steel sleeve
+        # sits in the can, and the bolt runs TRANSVERSE through the sleeve -- all coaxial
+        # on the pivot axis, none filling the leg solid.
+        bush_l = max(16.0, bush_d * 0.7)
+        sb, _ = F.bushing(steps, tag, U, "%s_%s" % (prefix, nm), pt, pivot,
+                          bush_d, bush_l, F.bolt_clearance(bush_d * 0.3))
+        F.bolt_assembly(steps, tag, U, "%s_%s" % (prefix, nm), pt, pivot,
+                        bush_l, sb)
+    return arm_id
 
 
 # --------------------------------------------------------------------------- #
 # one corner -- built from the engineering hardpoints (true 3D)
 # --------------------------------------------------------------------------- #
 def corner_steps(p: SuspensionParams, tag: str, mirror: bool) -> List[BuildStep]:
-    """Build one corner from the shared hardpoint table.
-
-    `mirror=False` builds the canonical reference corner (hub at local origin, +Y
-    outboard). `mirror=True` builds the OPPOSITE corner of the same axle for the
-    in-package `corners="axle"` preview (reflected onto the other hub at -track in
-    Y). The vehicle assembler does NOT use mirror -- it places this canonical part
-    via its own per-side transform (identity / Rz(180))."""
+    """Build one corner from the shared hardpoint table."""
     g, s, d = p.geometry, p.spring, p.damper
     a, k, arm = p.antiroll, p.knuckle, p.arm
     U = tag.upper()
@@ -381,122 +493,206 @@ def corner_steps(p: SuspensionParams, tag: str, mirror: bool) -> List[BuildStep]
     track = g.track_width_mm
 
     def M(pt: Vec3) -> Vec3:
-        """Mirror a LITERAL world point onto the opposite corner (axle preview)."""
         return _mirror_corner(pt, track) if mirror else pt
 
     def P(name: str) -> Vec3:
-        """A named hardpoint, mirrored for the opposite corner when requested."""
         return M(hp[name])
 
     steps: List[BuildStep] = []
 
-    # --- KNUCKLE / UPRIGHT (cast, ties hub bore + joints + caliper + steer arm) -- #
-    kid = _knuckle_steps(steps, p, tag, U, P, M, hp)
+    # --- KNUCKLE / UPRIGHT (cast; ties hub bore + ball-joint sockets + caliper +
+    #     steering eye), returns the per-joint socket centres ------------------- #
+    kid, sockets = _knuckle_steps(steps, p, tag, U, P, M, hp)
+    kp_axis = _unit(_sub(P("upper_ball_joint"), P("lower_ball_joint")))
 
     # leg sections: a fat, loaded inboard end necking to a slim ball-joint end.
-    w_in = max(26.0, arm.arm_diameter_mm + 16.0)    # inboard leg width (loaded)
-    w_out = max(16.0, arm.arm_diameter_mm + 2.0)    # outboard (ball-joint) width
-    h_in = max(16.0, arm.arm_diameter_mm + 4.0)     # inboard leg depth
-    h_out = max(10.0, arm.arm_diameter_mm - 6.0)    # outboard depth
-
-    # --- LOWER CONTROL ARM: a proper A-ARM (fore + aft legs -> one ball joint) --- #
-    lbj = P("lower_ball_joint")
-    lpf = P("lower_pickup_fore")
-    lpa = P("lower_pickup_aft")
-    # both legs converge on the SAME outboard ball-joint hub boss
-    steps.append(_axis_cyl(
-        "lower_arm_hub_%s" % tag, "lower_arm", "Lower_Arm_Hub_%s" % U,
-        _add(lbj, (0.0, 0.0, -h_out)), _add(lbj, (0.0, 0.0, h_out)),
-        w_out * 1.2, COL_ARM, material="arm_steel"))
-    _tapered_leg(steps, "lower_arm_fore_%s" % tag, "lower_arm", "Lower_Arm_Fore_%s" % U,
-                 lpf, lbj, w_in, w_out, h_in, h_out, COL_ARM, "arm_steel",
-                 u_dir=(0.0, 0.0, 1.0), target="lower_arm_hub_%s" % tag)
-    _tapered_leg(steps, "lower_arm_aft_%s" % tag, "lower_arm", "Lower_Arm_Aft_%s" % U,
-                 lpa, lbj, w_in, w_out, h_in, h_out, COL_ARM, "arm_steel",
-                 u_dir=(0.0, 0.0, 1.0), target="lower_arm_hub_%s" % tag)
-
-    # --- UPPER CONTROL ARM (multilink / double_wishbone only): an A-ARM too ------ #
-    if g.type in ("multilink", "double_wishbone"):
-        ubj = P("upper_ball_joint")
-        upf = P("upper_pickup_fore")
-        upa = P("upper_pickup_aft")
-        steps.append(_axis_cyl(
-            "upper_arm_hub_%s" % tag, "upper_arm", "Upper_Arm_Hub_%s" % U,
-            _add(ubj, (0.0, 0.0, -h_out)), _add(ubj, (0.0, 0.0, h_out)),
-            w_out * 1.1, COL_ARM, material="arm_steel"))
-        _tapered_leg(steps, "upper_arm_fore_%s" % tag, "upper_arm",
-                     "Upper_Arm_Fore_%s" % U, upf, ubj, w_in * 0.85, w_out * 0.9,
-                     h_in * 0.85, h_out, COL_ARM, "arm_steel",
-                     u_dir=(0.0, 0.0, 1.0), target="upper_arm_hub_%s" % tag)
-        _tapered_leg(steps, "upper_arm_aft_%s" % tag, "upper_arm",
-                     "Upper_Arm_Aft_%s" % U, upa, ubj, w_in * 0.85, w_out * 0.9,
-                     h_in * 0.85, h_out, COL_ARM, "arm_steel",
-                     u_dir=(0.0, 0.0, 1.0), target="upper_arm_hub_%s" % tag)
-
-    # --- TOE / TIE LINK: a slender steering tie-rod (shank + eye ends) ----------- #
-    toe_in = P("toe_pickup")
-    toe_out = P("toe_outboard")
-    rod_d = max(12.0, arm.arm_diameter_mm * 0.5)
-    steps.append(_axis_cyl(
-        "toe_link_%s" % tag, "toe_link", "Toe_Link_%s" % U, toe_in, toe_out,
-        rod_d, COL_ARM, material="arm_steel"))
-    # eye ends (a small can at each end so it reads as a tie-rod with rod-ends)
-    for end_name, pt, other in (("in", toe_in, toe_out), ("out", toe_out, toe_in)):
-        ua = _sub(other, pt)
-        eye0 = _add(pt, _scale(_unit(ua), -rod_d * 0.6))
-        eye1 = _add(pt, _scale(_unit(ua), rod_d * 0.6))
-        steps.append(_axis_tube(
-            "toe_eye_%s_%s" % (end_name, tag), "toe_link", "Toe_Eye_%s_%s" % (end_name, U),
-            eye0, eye1, rod_d * 1.7, rod_d * 0.7, COL_MOUNT, "joint_steel"))
-
-    # --- INBOARD BUSHINGS + OUTBOARD BALL JOINTS (real eyes/balls, 3D placed) ---- #
-    bj_d = arm.ball_joint_diameter_mm
+    w_in = max(26.0, arm.arm_diameter_mm + 16.0)
+    w_out = max(16.0, arm.arm_diameter_mm + 2.0)
+    h_in = max(16.0, arm.arm_diameter_mm + 4.0)
+    h_out = max(10.0, arm.arm_diameter_mm - 6.0)
     bush_d = arm.bushing_diameter_mm
-    _bushing(steps, "lower_bushing_fore_%s" % tag, U, lpf, _sub(lbj, lpf), bush_d)
-    _bushing(steps, "lower_bushing_aft_%s" % tag, U, lpa, _sub(lbj, lpa), bush_d)
-    _balljoint(steps, "lower_balljoint_%s" % tag, U, lbj, P("hub_centre"), bj_d)
-    if g.type in ("multilink", "double_wishbone"):
-        ubj = P("upper_ball_joint")
-        _bushing(steps, "upper_bushing_fore_%s" % tag, U, P("upper_pickup_fore"),
-                 _sub(ubj, P("upper_pickup_fore")), bush_d)
-        _bushing(steps, "upper_bushing_aft_%s" % tag, U, P("upper_pickup_aft"),
-                 _sub(ubj, P("upper_pickup_aft")), bush_d)
-        _balljoint(steps, "upper_balljoint_%s" % tag, U, ubj, P("hub_centre"), bj_d)
 
-    # --- COIL-OVER: damper body + piston rod + coil spring + perches ------------- #
+    # --- LOWER CONTROL ARM: a proper A-ARM, ONE united body, ball joint to knuckle -
+    lower_arm_id = _control_arm(steps, p, tag, U, "lower", P("lower_ball_joint"),
+                                P("lower_pickup_fore"), P("lower_pickup_aft"),
+                                sockets["lbj"], kp_axis, w_in, w_out, h_in, h_out, bush_d)
+
+    # --- UPPER CONTROL ARM (multilink / double_wishbone only) ------------------- #
+    if g.type in ("multilink", "double_wishbone"):
+        _control_arm(steps, p, tag, U, "upper", P("upper_ball_joint"),
+                     P("upper_pickup_fore"), P("upper_pickup_aft"), sockets["ubj"],
+                     kp_axis, w_in * 0.85, w_out * 0.9, h_in * 0.85, h_out, bush_d)
+
+    # --- TOE / TIE LINK: shank + two eyes UNITED into one body ------------------ #
+    _toe_link(steps, p, tag, U, P, sockets, bush_d)
+
+    # --- COIL-OVER: damper body + piston rod + coil spring + perches ------------ #
     _coilover_steps(steps, p, tag, U, P)
 
-    # --- ANTI-ROLL (STABILISER) DROP LINK (slender, eye ends, true axis) --------- #
+    # --- ANTI-ROLL (STABILISER) DROP LINK: link + two eyes UNITED into one body -- #
     if a.enabled:
-        arb_lo = P("arb_link_lower")
-        arb_hi = P("arb_link_upper")
-        steps.append(_axis_cyl(
-            "antiroll_%s" % tag, "anti_roll_bar", "Anti_Roll_Link_%s" % U,
-            arb_lo, arb_hi, a.bar_diameter_mm * 0.7, COL_ARB, material="bar_steel"))
-        for end_name, pt, other in (("lo", arb_lo, arb_hi), ("hi", arb_hi, arb_lo)):
-            ua = _sub(other, pt)
-            eye0 = _add(pt, _scale(_unit(ua), -a.bar_diameter_mm * 0.5))
-            eye1 = _add(pt, _scale(_unit(ua), a.bar_diameter_mm * 0.5))
-            steps.append(_axis_tube(
-                "antiroll_eye_%s_%s" % (end_name, tag), "anti_roll_bar",
-                "Anti_Roll_Eye_%s_%s" % (end_name, U), eye0, eye1,
-                a.bar_diameter_mm * 1.4, a.bar_diameter_mm * 0.5, COL_MOUNT, "joint_steel"))
+        _antiroll_link(steps, p, tag, U, P, lower_arm_id)
     return steps
 
 
+def _toe_link(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str, P,
+              sockets: Dict[str, Vec3], bush_d: float) -> None:
+    """The TOE / tie link as ONE united body: a slender shank with an EYE at each end
+    (both united into the shank create).  The inboard eye takes a bushing + bolt to the
+    chassis; the outboard eye STACKS against the knuckle steering eye (a clevis) with a
+    bolt through both -- so the link never overlaps the knuckle as a solid."""
+    arm = p.arm
+    toe_in = P("toe_pickup")
+    toe_out = P("toe_outboard")
+    rod_d = rod_d_of(p)
+    axis = _unit(_sub(toe_out, toe_in))
+    eye_od = rod_d * 2.0
+    # the tie-rod OUTBOARD joint is a vertical tapered-stud joint: the knuckle steering
+    # eye is the LOWER disc (on the vertical pivot) and the tie-rod outboard eye is the
+    # UPPER disc stacked on top of it; a vertical bolt drops through both with its head
+    # ABOVE and nut BELOW -- clear of the horizontal link shank and the knuckle barrel.
+    steer_eye = sockets["steer_eye"]
+    steer_bore = sockets["steer_eye_bore"][0]
+    clevis_t = sockets["clevis_t"][0]
+    steer_pivot = sockets["steer_pivot"]
+    # upper disc of the stack, with a 3 mm face gap so the touching clevis faces do not
+    # sample as interference.
+    out_eye = _add(steer_eye, _scale(steer_pivot, clevis_t + 3.0))
+    in_eye = toe_in
+    in_axis = _transverse(axis)                  # inboard pivot axis (transverse to rod)
+    link_id = "toe_link_%s" % tag
+
+    # 1) shank create (from just inside the inboard eye to just inside the outboard eye)
+    sh0 = _add(in_eye, _scale(_unit(_sub(out_eye, in_eye)), rod_d * 0.5))
+    sh1 = _add(out_eye, _scale(_unit(_sub(in_eye, out_eye)), rod_d * 0.5))
+    steps.append(_axis_cyl(
+        link_id, "toe_link", "Toe_Link_%s" % U, sh0, sh1, rod_d, COL_ARM,
+        material="arm_steel"))
+    # 2) eyes united into the shank: the outboard eye is coaxial with the link (it
+    #    stacks against the knuckle steering eye); the inboard eye is coaxial with the
+    #    TRANSVERSE pivot axis (a real tie-rod inner joint), so its bushing/bolt do not
+    #    run collinear into the shank.  The inboard eye bore holds the whole bushing can
+    #    (can OD == eye bore), so nothing protrudes past the eye into the shank.
+    in_bush_can = eye_od * 0.62                  # bushing can OD == inboard-eye bore
+    in_eye_len = max(rod_d * 1.1, bush_d * 0.6 + 2.0)
+    F.united_eye(steps, "toe_eye_in_%s" % tag, "toe_link", "Toe_Eye_In_%s" % U,
+                 link_id, in_eye, in_axis, eye_od, in_bush_can, in_eye_len,
+                 COL_MOUNT, "joint_steel")
+    F.united_eye(steps, "toe_eye_out_%s" % tag, "toe_link", "Toe_Eye_Out_%s" % U,
+                 link_id, out_eye, steer_pivot, eye_od, steer_bore, clevis_t,
+                 COL_MOUNT, "joint_steel")
+
+    # 3) inboard joint: a bushing in the inboard eye + bolt to the chassis pickup, on a
+    #    pivot axis TRANSVERSE to the link (a real tie-rod inner joint pivots about an
+    #    axis perpendicular to the rod) so the bolt does not run collinear into the
+    #    link shank.  The inboard eye above is built transverse to match.
+    bush_l = in_eye_len
+    sb, _ = F.bushing(steps, tag, U, "toe_in", in_eye, in_axis, in_bush_can, bush_l,
+                      F.bolt_clearance(in_bush_can * 0.3))
+    F.bolt_assembly(steps, tag, U, "toe_in", in_eye, in_axis, bush_l, sb)
+    # 4) outboard joint: a VERTICAL bolt through both stacked clevis discs (tie-rod
+    #    upper eye + knuckle lower steer eye).  span = the two clevis thicknesses; the
+    #    head sits ABOVE and the nut BELOW, clear of the link shank and the barrel.
+    pin_c = _lerp(out_eye, steer_eye, 0.5)
+    span = _norm(_sub(out_eye, steer_eye)) + clevis_t   # both eyes + the face gap
+    F.bolt_assembly(steps, tag, U, "toe_out", pin_c, steer_pivot, span, steer_bore,
+                    head_d=rod_d * 1.3)
+
+
+def _antiroll_link(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str, P,
+                   arm_id: str) -> None:
+    """The anti-roll DROP LINK as ONE united body (a slender shank + an eye at each end).
+    The drop link runs FORE of (offset +X from) the control arm so it never buries into
+    the arm; a cast BRACKET on the lower arm reaches out to the lower eye, and the joint
+    is a bolt through the stacked bracket-eye + drop-link eye (a real clevis).  The eyes
+    pivot transverse to the link so the bolt head/nut sit clear to the side."""
+    a = p.antiroll
+    lo0 = P("arb_link_lower")
+    hi0 = P("arb_link_upper")
+    rod_d = a.bar_diameter_mm * 0.7
+    axis = _unit(_sub(hi0, lo0))
+    pivot = _transverse(axis)                    # eye/bolt pivot axis (transverse to link)
+    eye_od = a.bar_diameter_mm * 1.6
+    eye_len = a.bar_diameter_mm * 0.9
+    bore = F.bolt_clearance(a.bar_diameter_mm * 0.5) + 1.0
+    # offset the whole drop link FORE (+X) so it clears the control-arm legs; the bracket
+    # below bridges back to the arm.  (Mirroring flips X via the M() that produced lo0.)
+    off = 1.0 if lo0[0] >= 0 else -1.0
+    offset = (off * (eye_od * 0.5 + 50.0), 0.0, 0.0)
+    lo = _add(lo0, offset)
+    hi = _add(hi0, offset)
+    link_id = "antiroll_%s" % tag
+    # the shank runs the FULL eye-centre to eye-centre span (it passes THROUGH both eye
+    # bosses), so each eye boss overlaps the shank -> the unite makes one connected body
+    # and the eye bore cuts it (priority 1: a disjoint boss makes the bore land outside).
+    steps.append(_axis_cyl(
+        link_id, "anti_roll_bar", "Anti_Roll_Link_%s" % U, lo, hi, rod_d, COL_ARB,
+        material="bar_steel"))
+    for nm, pt in (("lo", lo), ("hi", hi)):
+        F.united_eye(steps, "antiroll_eye_%s_%s" % (nm, tag), "anti_roll_bar",
+                     "Anti_Roll_Eye_%s_%s" % (nm.title(), U), link_id, pt, pivot,
+                     eye_od, bore, eye_len, COL_MOUNT, "joint_steel")
+    # the UPPER eye bolts to the bar (a free rod-end here): a bolt centred on it.
+    F.bolt_assembly(steps, tag, U, "antiroll_hi", hi, pivot, eye_len, bore)
+
+    # cast BRACKET on the LOWER ARM: a tapered stub UNITED into the arm from the ARB
+    # pickup (on the arm leg) out toward the drop link, ending at a standalone bracket
+    # EYE RING.  The bracket eye is a STANDALONE kind="tube" ring (atomic create+bore --
+    # never "tool outside target"); the bracket-leg tip reaches into it (touching) and
+    # the joint bolt threads the ring + the drop-link lower eye.
+    br_root = lo0                                # on the arm leg (overlaps it -> connects)
+    # stacked along the pivot from the drop eye, with a 1.5 mm face gap so the touching
+    # clevis faces do not sample as interference.
+    br_eye_c = _add(lo, _scale(pivot, eye_len + 1.5))
+    # the bracket leg stops at the eye RING's OUTER face (not its centre), so the solid
+    # leg only TOUCHES the standalone eye ring -- it does not fill the ring wall (which
+    # would read as interference now the ring is its own body).
+    br_leg_tip = _add(br_eye_c, _scale(_unit(_sub(br_root, br_eye_c)), eye_od * 0.55 + 4.0))
+    # build the bracket from the EYE end (p_in) to the ARM ROOT (p_out): _tapered_leg
+    # emits the p_out segment FIRST, and p_out = the arm root (on the leg), so the first
+    # unite touches the arm -> the bracket stays connected (priority 2 unite-order).
+    _tapered_leg(steps, "antiroll_bracket_%s" % tag, "lower_arm",
+                 "Anti_Roll_Bracket_%s" % U, br_leg_tip, br_root,
+                 rod_d * 1.2, rod_d * 1.6, rod_d * 1.0, rod_d * 1.2,
+                 COL_ARM, "arm_steel", u_dir=(0.0, 0.0, 1.0), target=arm_id)
+    steps.append(F.ring_body(
+        "antiroll_bracket_eye_%s" % tag, "anti_roll_bar", "Anti_Roll_Bracket_Eye_%s" % U,
+        br_eye_c, pivot, eye_od, bore, eye_len, COL_ARM, "arm_steel"))
+    # the LOWER joint bolt threads BOTH stacked eyes (drop-link lower eye + bracket eye).
+    pin_c = _lerp(lo, br_eye_c, 0.5)
+    span = _norm(_sub(lo, br_eye_c)) + eye_len          # both eyes + the face gap
+    F.bolt_assembly(steps, tag, U, "antiroll_lo", pin_c, pivot, span, bore)
+
+
 def _coilover_steps(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str, P) -> None:
-    """The COIL-OVER: a damper body (cylinder) with an exposed piston ROD reaching to
-    the top mount, the COIL SPRING rendered as helical turns COAXIAL around that same
-    axis, and a lower + upper spring PERCH seating the coil.  Seated on the lower arm
-    (damper_lower) and reaching the body/tower top (damper_top, or strut_top for a
-    MacPherson strut routed coaxially through the upright)."""
+    """The COIL-OVER: a damper BODY cylinder + an exposed piston ROD united into one
+    body, with the COIL SPRING as ring-turns COAXIAL around the rod, and a lower + upper
+    spring PERCH + a TOP MOUNT modelled as STANDALONE kind="tube" RINGS the rod passes
+    through.  The perches/top-mount are NOT united onto the rod: a tube's bore is coaxial
+    with its OD by construction, so it can never throw the NX "tool body completely
+    outside target body" error (the boss-unite-onto-a-spine + separate-bore pattern did,
+    three rounds running, when the boss did not reliably overlap the rod).  The rod OD is
+    a clearance under each ring bore, so the rod sits in the void -- no interference --
+    and the perch reads as a real ring the rod runs through; the coil seats on the perch
+    faces."""
     s, d, g, k = p.spring, p.damper, p.geometry, p.knuckle
     coil_d = s.coil_outer_diameter_mm
-    wire_d = max(8.0, coil_d * 0.10)               # representative spring-wire dia
+    wire_d = max(8.0, coil_d * 0.10)
 
     if g.type == "macpherson":
-        seat = P("lower_ball_joint")
+        # MacPherson: the strut IS the upper link, leaning along lower_ball_joint ->
+        # strut_top.  Its visible body/perch start ABOVE the upright (a real strut tube
+        # clamps to the knuckle and the lower spring seat sits well up the tube), so the
+        # damper body clears the hub barrel + ball-joint zone rather than burying into
+        # it.  Keep the lean (the axis) but raise the seat clear of the knuckle envelope.
+        bj = P("lower_ball_joint")
         top = P("strut_top")
+        w = _unit(_sub(top, bj))
+        barrel_clear = (k.hub_bore_diameter_mm + 2.0 * min(16.0, k.thickness_mm * 0.4)) / 2.0
+        clear_z = barrel_clear + d.damper_diameter_mm / 2.0 + 14.0    # clear the barrel disc
+        # advance along the strut axis until the seat rises above the knuckle envelope
+        t = (clear_z - bj[2]) / w[2] if w[2] > 1e-6 else 0.0
+        seat = _add(bj, _scale(w, max(0.0, t)))
     else:
         seat = P("damper_lower")
         top = P("damper_top")
@@ -504,49 +700,66 @@ def _coilover_steps(steps: List[BuildStep], p: SuspensionParams, tag: str, U: st
     axis = _sub(top, seat)
     L = _norm(axis)
     w = _unit(axis)
+    cov_id = "damper_%s" % tag
 
-    # damper BODY: the lower ~55 % of the run (the pressure tube the rod slides in).
-    body_top = _add(seat, _scale(w, 0.55 * L))
+    # damper BODY: the lower ~45 % of the run -- the create the coil-over unites into.
+    rod_d = d.damper_diameter_mm * 0.42
+    body_top = _add(seat, _scale(w, 0.45 * L))
     steps.append(_axis_cyl(
-        "damper_%s" % tag, "damper",
+        cov_id, "damper",
         "Strut_Damper_%s" % U if g.type == "macpherson" else "Damper_%s" % U,
         seat, body_top, d.damper_diameter_mm, COL_DAMPER, material="damper_steel"))
-    # piston ROD: a thinner shaft from the body top up to the top mount.
+    # piston ROD: a thinner shaft from the body top up to (and a touch past) the top
+    # mount, UNITED in.  The rod is the spine every perch/top-mount boss overlaps, so
+    # those unites stay connected and their bores cut a clean rod-clearance hole.
+    rod_tip = _add(top, _scale(w, wire_d))
     steps.append(_axis_cyl(
         "damper_rod_%s" % tag, "damper", "Damper_Rod_%s" % U,
-        body_top, top, d.damper_diameter_mm * 0.42, COL_ROD, material="rod_steel"))
+        body_top, rod_tip, rod_d, COL_ROD, material="rod_steel",
+        boolean="unite", target=cov_id))
 
-    # lower + upper spring PERCH (the seats the coil reacts against).
-    perch_lo0 = _add(seat, _scale(w, wire_d * 0.5))
-    perch_lo1 = _add(seat, _scale(w, wire_d * 1.5))
-    steps.append(_axis_tube(
+    # The fat coil (and its perches) sit ABOVE the chassis rail band, on the ROD region.
+    coil_lo_local_z = coil_d / 2.0 + 8.0          # local Z that clears the rail band
+    t_clear = (coil_lo_local_z - seat[2]) / w[2] if w[2] > 1e-6 else 0.0
+    t_lo = max(0.46 * L, min(t_clear, 0.60 * L))  # on the rod, above body_top
+    coil_base = _add(seat, _scale(w, t_lo))
+    rod_hole = rod_d + 2.0 * F.FIT_CLEARANCE      # the rod passes the perch with a gap
+
+    # lower + upper spring PERCH and the TOP MOUNT are STANDALONE kind="tube" RINGS (an
+    # atomic outer-create + coaxial inner-subtract -- the bore is coaxial with the OD by
+    # construction, so it can never throw "tool body completely outside target").  The
+    # damper ROD passes THROUGH each ring's bore as a thinner solid (rod_OD < bore -
+    # clearance), so the rod sits in the void with no interference and the perch reads as
+    # a real ring the rod runs through.  They are their OWN bodies (NOT united onto the
+    # rod) -- at most they touch the rod at the bore wall (a clearance gap, so ~0).
+    perch_od = coil_d + 8.0                       # just larger than the spring OD
+    perch_lo_c = _add(coil_base, _scale(w, wire_d))
+    steps.append(F.ring_body(
         "spring_perch_lo_%s" % tag, "spring", "Spring_Perch_Lo_%s" % U,
-        perch_lo0, perch_lo1, coil_d + 2.0 * wire_d + 6.0, d.damper_diameter_mm + 2.0,
-        COL_PERCH, "perch_steel"))
-    # the coil works over the lower ~80 % of the run (rod + top mount take the rest)
-    spring_top = _add(seat, _scale(w, 0.80 * L))
-    perch_hi0 = _add(spring_top, _scale(w, -wire_d * 0.5))
-    perch_hi1 = _add(spring_top, _scale(w, wire_d * 0.5))
-    steps.append(_axis_tube(
+        perch_lo_c, w, perch_od, rod_hole, wire_d, COL_PERCH, "perch_steel"))
+    spring_top = _add(seat, _scale(w, 0.82 * L))
+    perch_hi_c = _add(spring_top, _scale(w, wire_d * 0.5))
+    steps.append(F.ring_body(
         "spring_perch_hi_%s" % tag, "spring", "Spring_Perch_Hi_%s" % U,
-        perch_hi0, perch_hi1, coil_d + 2.0 * wire_d + 6.0, d.damper_diameter_mm * 0.5,
-        COL_PERCH, "perch_steel"))
+        perch_hi_c, w, perch_od, rod_hole, wire_d, COL_PERCH, "perch_steel"))
 
-    # the COIL itself -- helical turns coaxial around the damper, seated perch->perch.
+    # TOP MOUNT: a body/tower mount RING at the top (the rod passes through its bore) so
+    # the coil-over does not float.  Centred BELOW the rod tip so the rod runs through.
+    top_c = _add(top, _scale(w, -wire_d))
+    steps.append(F.ring_body(
+        "damper_top_mount_%s" % tag, "damper", "Top_Mount_%s" % U,
+        top_c, w, coil_d * 0.9, rod_hole, wire_d, COL_MOUNT, "mount_steel"))
+
+    # the COIL itself -- ring-turns coaxial around the damper, seated perch face to
+    # perch face (a SEPARATE body, clear of the damper body by construction).
+    coil_seat = _add(perch_lo_c, _scale(w, wire_d * 0.5))
+    coil_topf = _add(perch_hi_c, _scale(w, -wire_d * 0.5))
     _coil_turns(steps, "spring_%s" % tag, "Coil_Spring_%s" % U,
-                perch_lo1, perch_hi0, coil_d, wire_d, COL_SPRING, "spring_steel")
-
-    # TOP MOUNT: a body/tower mount cap at the top so the coil-over does not float.
-    cap0 = _add(top, _scale(w, -wire_d))
-    steps.append(_axis_tube(
-        "damper_top_mount_%s" % tag, "damper", "Top_Mount_%s" % U, cap0, top,
-        coil_d * 0.9, d.damper_diameter_mm * 0.42, COL_MOUNT, "mount_steel"))
+                coil_seat, coil_topf, coil_d, wire_d, COL_SPRING, "spring_steel")
 
 
 def _corners(p: SuspensionParams):
-    """Yield (tag, mirror) per modelled corner. `corners="axle"` adds the mirrored
-    opposite corner for a standalone two-corner preview; the reference corner is
-    always the canonical (un-mirrored) one whose hub is on the local origin."""
+    """Yield (tag, mirror) per modelled corner."""
     if p.corners == "axle":
         return [("r", False), ("l", True)]
     return [("r", False)]
@@ -560,8 +773,7 @@ def build_steps(p: SuspensionParams) -> List[BuildStep]:
 
 
 def generate(p: SuspensionParams = None) -> Dict[str, Any]:
-    """Full suspension-corner blueprint dict (NX-independent). Same schema as
-    driveline / motor so the same run_journal builder consumes it."""
+    """Full suspension-corner blueprint dict (NX-independent)."""
     if p is None:
         p = SuspensionParams()
     g = engineering.derive(p)
@@ -571,7 +783,7 @@ def generate(p: SuspensionParams = None) -> Dict[str, Any]:
         "name": p.name,
         "units": "mm",
         "axis": "Z",
-        "stack_length": g.corner_envelope_height_mm,   # advisory envelope height
+        "stack_length": g.corner_envelope_height_mm,
         "parameters": p.to_dict(),
         "expressions": [
             {"name": n, "value": v, "unit": u} for (n, v, u) in p.expressions()

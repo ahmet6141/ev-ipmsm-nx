@@ -27,7 +27,8 @@ from motor_nx import nx_builder as eng
 
 
 # suspension material-role DISPLAY NAMES (set via Body.SetName so the FEA / CAM can
-# select bodies by role). Keyed by the component grouping below.
+# select bodies by role). Keyed by the component grouping below.  EVERY component maps
+# to a role so EVERY create body is named (the inspector needs names to read its report).
 _SUSPENSION_ROLE_NAME = {
     "Knuckle_R": "KNUCKLE_R",
     "Knuckle_L": "KNUCKLE_L",
@@ -37,44 +38,60 @@ _SUSPENSION_ROLE_NAME = {
     "Spring": "COIL_SPRING",
     "Damper": "DAMPER",
     "Anti_Roll": "ANTI_ROLL_BAR",
+    "Ball_Joint": "BALL_JOINT",
+    "Bushing": "BUSHING",
+    "Bolt": "BOLT",
     "Mounts": "MOUNT",
 }
 
 
 def _suspension_component_of(step_id):
-    """Group a build-step id into a manufacturable component (per-part STEP export
-    + body naming). Mirrors driveline_nx.nx_builder._driveline_component_of.
+    """Group a build-step id into a manufacturable component (per-part STEP export +
+    body NAMING -- every create body must get a name so the NX inspector can read the
+    interference report).  Grouping is by id PREFIX; the corner tag (_l / _r) is the
+    LAST token (so `lower_arm_hub_l` is left, `lower_arm_hub_r` right) -- using a bare
+    "l in tokens" test wrongly tagged every id (e.g. 'lower') as left.
 
-    The redesign's richer geometry adds per-segment / per-feature ids (the tapered
-    A-arm legs `lower_arm_fore_r_s0`, the cast-upright features `knuckle_web_r` /
-    `knuckle_lbj_arm_r_s1` / `knuckle_steer_arm_r`, the coil-over `damper_rod_r` /
-    `damper_top_mount_r` / `spring_perch_lo_r` / `spring_r_turn3`, and the rod-end
-    eyes `toe_eye_in_r` / `antiroll_eye_lo_r`). Grouping is by id PREFIX (so every
-    such sub-feature lands in the right component), and the corner tag (_l / _r) is
-    detected as a TOKEN anywhere in the id -- not just as a suffix -- so the segmented
-    knuckle ids (... _r _s0) still pick the correct side."""
+    Every redesign id is covered:
+      * knuckle* / caliper_mount*                      -> Knuckle_<side>
+      * lower_arm* / lower_fore* / lower_aft*           -> Lower_Arm  (arm + its pickup
+        eyes; the inboard bushings/bolts are split out below by feature)
+      * upper_arm* / upper_fore* / upper_aft*           -> Upper_Arm
+      * toe_link* / toe_eye* / toe_in* / toe_out*       -> Toe_Link (+ its joint hardware)
+      * spring* / damper*                               -> Spring / Damper (coil-over)
+      * antiroll*                                       -> Anti_Roll (drop link + bracket)
+      * *_bj_housing* / *_bj_stud*                      -> Ball_Joint
+      * *_can* / *_sleeve*  (bushing parts)             -> Bushing
+      * *_shank* / *_head* / *_nut*  (fastener parts)   -> Bolt"""
     base = step_id.split("#")[0]
     tokens = base.split("_")
-    side = "_L" if "l" in tokens else "_R"     # corner tag token (default right)
+    side = "_L" if tokens and tokens[-1] == "l" else "_R"   # corner tag = LAST token
+    # feature-level groups first (so a fastener/bushing/ball-joint is named by feature,
+    # not swallowed by the member prefix)
+    if "_shank_" in base or "_head_" in base or "_nut_" in base:
+        return "Bolt"
+    if "_can_" in base or "_sleeve_" in base:
+        return "Bushing"
+    if "_bj_housing_" in base or "_bj_stud_" in base:
+        return "Ball_Joint"
+    # member groups
     if base.startswith("knuckle") or base.startswith("caliper_mount"):
         return "Knuckle" + side
-    if base.startswith("lower_arm"):
+    if base.startswith("lower_arm") or base.startswith("lower_fore") or base.startswith("lower_aft"):
         return "Lower_Arm"
-    if base.startswith("upper_arm"):
+    if base.startswith("upper_arm") or base.startswith("upper_fore") or base.startswith("upper_aft"):
         return "Upper_Arm"
-    if base.startswith("toe_link") or base.startswith("toe_eye"):
+    if base.startswith("toe"):            # toe_link, toe_eye, toe_in, toe_out
         return "Toe_Link"
     if base.startswith("spring"):
         return "Spring"
     if base.startswith("damper"):
         return "Damper"
-    if base.startswith("antiroll"):       # incl. antiroll_eye_* rod-end eyes
+    if base.startswith("antiroll"):       # drop link + eyes + arm bracket
         return "Anti_Roll"
-    # bushings + ball joints (the inboard pickups / outboard joints), incl. the
-    # redesign's per-leg fore/aft variants (lower_bushing_fore_r, upper_balljoint_l).
     if "bushing" in base or "balljoint" in base:
         return "Mounts"
-    return None
+    return "Mounts"                       # safety net -- never leave a body unnamed
 
 
 def _default_blueprint():

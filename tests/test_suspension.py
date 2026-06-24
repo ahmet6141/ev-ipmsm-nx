@@ -289,8 +289,11 @@ def test_links_are_true_3d_not_flat_z_plates():
     set). Ball-joint hub bosses / eye-ends (round) are allowed alongside the legs."""
     blue = bp.generate(SuspensionParams())
     # the A-arm LEGS (the structural members) are the prisms; assert they are true 3D.
+    # The arm hub EYE (a ring-prism coaxial with the near-vertical kingpin axis) is NOT
+    # a leg, so filter to the leg segments (ids carry "fore"/"aft").
     leg_steps = [s for s in blue["build_steps"]
-                 if s["role"] in ("lower_arm", "upper_arm") and s["kind"] == "prism"]
+                 if s["role"] in ("lower_arm", "upper_arm") and s["kind"] == "prism"
+                 and ("fore" in s["id"] or "aft" in s["id"])]
     assert leg_steps
     for s in leg_steps:
         ax = s["axis"]
@@ -298,12 +301,17 @@ def test_links_are_true_3d_not_flat_z_plates():
         assert abs(ax[1]) > 1e-6, s["id"]
         assert not (abs(ax[0]) < 1e-9 and abs(ax[1]) < 1e-9), s["id"]
     # every link role is axis-placed along its true 3D axis (origin3 set, never a
-    # legacy +Z column) -- arms, toe link, spring, damper, anti-roll.
+    # legacy +Z column).  Eyes/perches/top-mount discs are deliberately on a joint PIVOT
+    # axis (which may be vertical -- a real tapered-stud tie-rod / drop-link rod-end), so
+    # the +Z check applies to the structural SHANK / LEG members, not the joint discs.
     for role in ("lower_arm", "upper_arm", "toe_link", "spring", "damper", "anti_roll_bar"):
         st = [s for s in blue["build_steps"] if s["role"] == role]
         assert st, role
         for s in st:
             assert s.get("origin3") is not None, s["id"]
+        shanks = [s for s in st if "eye" not in s["id"] and "perch" not in s["id"]
+                  and "mount" not in s["id"] and "turn" not in s["id"]]
+        for s in shanks:
             ax = s["axis"]
             assert not (abs(ax[0]) < 1e-9 and abs(ax[1]) < 1e-9 and abs(ax[2] - 1.0) < 1e-9), s["id"]
 
@@ -442,9 +450,11 @@ def test_every_link_spans_its_two_hardpoints():
     hp = eng.hardpoints(p)
     blue = bp.generate(p)
     steps = {s["id"]: s for s in blue["build_steps"]}
-    tol = 40.0  # mm: a ball-joint boss / bushing eye radius around the hardpoint
+    tol = 55.0  # mm: a ball-joint boss / bushing eye radius + the kingpin BJ offset
 
-    # control-arm legs: each leg runs from its inboard pickup to the shared ball joint
+    # control-arm legs: each leg runs from near its inboard pickup to near the ball joint
+    # (the leg now starts at the bored pickup eye and ends at the arm hub eye, which is
+    # offset from the ball joint along the kingpin by the ball-joint length).
     cases = [
         ("lower_arm_fore_r_s0", "lower_pickup_fore", "lower_arm_fore_r_s2", "lower_ball_joint"),
         ("lower_arm_aft_r_s0", "lower_pickup_aft", "lower_arm_aft_r_s2", "lower_ball_joint"),
@@ -452,20 +462,31 @@ def test_every_link_spans_its_two_hardpoints():
         ("upper_arm_aft_r_s0", "upper_pickup_aft", "upper_arm_aft_r_s2", "upper_ball_joint"),
     ]
     for in_id, in_hp, out_id, out_hp in cases:
-        in_a, _ = _axis_endpoints(steps[in_id])     # leg starts at the inboard pickup
-        _, out_b = _axis_endpoints(steps[out_id])   # last segment ends at the ball joint
-        assert _dist(in_a, hp[in_hp]) <= tol, in_id
-        assert _dist(out_b, hp[out_hp]) <= tol, out_id
+        a0, a1 = _axis_endpoints(steps[in_id])      # the inboard segment near the pickup
+        b0, b1 = _axis_endpoints(steps[out_id])     # the outboard segment near the ball joint
+        assert min(_dist(a0, hp[in_hp]), _dist(a1, hp[in_hp])) <= tol, in_id
+        assert min(_dist(b0, hp[out_hp]), _dist(b1, hp[out_hp])) <= tol, out_id
 
     # toe / tie link spans the toe pickup -> toe outboard (steering-arm) point
     a, b = _axis_endpoints(steps["toe_link_r"])
     assert _near_any(a, [hp["toe_pickup"], hp["toe_outboard"]], tol)
     assert _near_any(b, [hp["toe_pickup"], hp["toe_outboard"]], tol)
 
-    # anti-roll drop link spans its two bar/arm hardpoints
+    # anti-roll DROP LINK: the link runs parallel to the bar-end -> arm line but OFFSET
+    # clear of the arm (so it does not bury into it); a cast BRACKET on the lower arm
+    # reaches from the ARB pickup out to the link's lower eye.  Assert (a) the bracket
+    # roots on the arm at the ARB lower hardpoint, and (b) the link spans two points the
+    # same DISTANCE apart as the two ARB hardpoints (it is the drop link, just shifted).
+    # the bracket roots on the arm at the ARB lower hardpoint (one of its segment ends
+    # sits there); check the closest bracket-segment endpoint.
+    br_ends = []
+    for sid in ("antiroll_bracket_r_s0", "antiroll_bracket_r_s1", "antiroll_bracket_r_s2"):
+        br_ends.extend(_axis_endpoints(steps[sid]))
+    assert min(_dist(e, hp["arb_link_lower"]) for e in br_ends) <= tol
     a, b = _axis_endpoints(steps["antiroll_r"])
-    assert _near_any(a, [hp["arb_link_lower"], hp["arb_link_upper"]], tol)
-    assert _near_any(b, [hp["arb_link_lower"], hp["arb_link_upper"]], tol)
+    link_len = _dist(a, b)
+    hp_len = _dist(hp["arb_link_lower"], hp["arb_link_upper"])
+    assert abs(link_len - hp_len) <= tol               # spans the drop-link length
 
 
 def test_coilover_seats_on_the_two_damper_hardpoints():
@@ -477,15 +498,18 @@ def test_coilover_seats_on_the_two_damper_hardpoints():
     blue = bp.generate(p)
     steps = {s["id"]: s for s in blue["build_steps"]}
     seat, _ = _axis_endpoints(steps["damper_r"])         # damper body base = lower seat
-    _, rod_top = _axis_endpoints(steps["damper_rod_r"])  # rod tip = top mount
+    _, rod_top = _axis_endpoints(steps["damper_rod_r"])  # rod tip ~ top mount
     assert _dist(seat, hp["damper_lower"]) <= 5.0
-    assert _dist(rod_top, hp["damper_top"]) <= 5.0
+    # the rod runs a touch PAST the top mount so its boss is fully bored, so allow the
+    # small overshoot (the rod tip is one spring-wire diameter beyond damper_top).
+    assert _dist(rod_top, hp["damper_top"]) <= 20.0
 
 
 def test_coilover_is_coaxial_spring_around_damper():
     """The COIL SPRING must be coaxial AROUND the damper: every coil turn is centred on
-    the damper working axis, and the coil bore clears the damper body (the spring
-    wraps the rod, it is not a separate bare tube). The defining realism fix."""
+    the damper working axis, and the coil BORE clears the damper body (the spring wraps
+    the rod, it is not a separate bare tube and never overlaps it). The realism fix.
+    Each turn is a kind='tube' ring, so its bore is its inner_radius."""
     blue = bp.generate(SuspensionParams())
     damper = [s for s in blue["build_steps"] if s["id"] == "damper_r"][0]
     base = tuple(damper["origin3"])
@@ -498,14 +522,17 @@ def test_coilover_is_coaxial_spring_around_damper():
         return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
     for t in turns:
-        c = tuple(t["origin3"])
+        assert t["kind"] == "tube", t["id"]                  # a real hollow ring
+        # the turn CENTRE (origin3 is one face; centre = origin3 + axis*length/2)
+        wt = _unit(t["axis"])
+        c = tuple(t["origin3"][i] + wt[i] * t["length"] / 2.0 for i in range(3))
         d = (c[0] - base[0], c[1] - base[1], c[2] - base[2])
         off = math.sqrt(sum(x * x for x in _cross(d, w)))   # distance of turn centre to axis
         assert off < 1.0, t["id"]                            # turn centre ON the damper axis
         # the coil bore is larger than the damper body radius -> it wraps around it
         assert t["inner_radius"] > damper_r, t["id"]
         # and the turn axis is the damper axis (concentric, not skew)
-        assert _dist(_unit(t["axis"]), w) < 1e-6, t["id"]
+        assert _dist(wt, w) < 1e-6, t["id"]
 
 
 def test_knuckle_is_one_cast_body_uniting_features():
@@ -538,3 +565,298 @@ def test_arms_are_a_arms_two_legs_one_ball_joint():
         assert fore and aft, role                   # two distinct legs
         for s in legs:
             assert s["target"] == hub_id, s["id"]   # both converge on one ball-joint boss
+
+
+# --------------------------------------------------------------------------- #
+# REAL, CLEAN JOINTS -- dedicated bolts, coaxial same-Ø holes, eyes united into
+# their link, no self-intersecting sections (so it BUILDS in NX), and no solid
+# interpenetration BY CONSTRUCTION (the redesign brief).
+#
+# IMPORTANT: vehicle_nx/clearance.py is BLIND to `subtract` voids and treats a
+# `tube` as a SOLID disc, so it gives FALSE interpenetration readings on bored
+# parts (a bolt in a bored eye, a hollow knuckle barrel near an offset arm).  The
+# DEFINITIVE no-interpenetration arbiter is verification/nx_inspect.py (real NX
+# point-in-solid containment, which DOES see the subtracted bores) -- run in NX.
+# These tests therefore prove cleanliness STRUCTURALLY (united members, coaxial
+# same-Ø bores, members separated along the joint axis and bridged only by a
+# bolt/stud/sleeve sitting in a subtracted bore), and use clearance.py ONLY for
+# gross solid-member overlap it can actually see (the two arms, arm vs link).
+# --------------------------------------------------------------------------- #
+from suspension_nx import fasteners as F            # noqa: E402
+from vehicle_nx import clearance as clr             # noqa: E402
+
+_IDENTITY = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _by_id(blue):
+    return {s["id"]: s for s in blue["build_steps"]}
+
+
+def _tube_bore_od(step):
+    """(bore_d, outer_d) of a kind='tube' ring body."""
+    assert step["kind"] == "tube", step["id"]
+    return 2.0 * step["inner_radius"], 2.0 * step["outer_radius"]
+
+
+def _eye_bore(blue, eye_id):
+    """The through-bore diameter of a `united_eye` (a unite boss + a '<id>_bore'
+    subtract cylinder).  Read from the subtract step the helper emits."""
+    steps = _by_id(blue)
+    bore = steps[eye_id + "_bore"]
+    assert bore["boolean"] == "subtract", eye_id
+    return 2.0 * bore["outer_radius"]
+
+
+# --------------------------------------------------------------------------- #
+# (1) it must BUILD in NX: no self-intersecting sections / single-loop annulus
+# --------------------------------------------------------------------------- #
+def test_no_self_intersecting_sections_every_hollow_is_outer_plus_inner():
+    """NX's Section rejects a single profile holding an outer AND an inner loop as
+    "self intersecting" (the failure the coordinator hit in real NX).  So every prism
+    profile must be ONE simple loop (a 4-point rectangle here), and every HOLLOW must
+    be either a kind='tube' (outer create + inner subtract, handled by the builder) or
+    a `united_eye` (a solid boss UNITE + a separate bore SUBTRACT) -- never an annulus
+    profile.  This guards the "builds in NX" property by construction."""
+    for t in TYPES:
+        blue = bp.generate(SuspensionParams().overridden(**{"geometry.type": t}))
+        for s in blue["build_steps"]:
+            if s["kind"] == "prism" and s.get("profile") is not None:
+                # a simple, non-self-intersecting loop -- a rectangle leg/web section
+                assert len(s["profile"]) == 4, (t, s["id"], len(s["profile"]))
+            if s["kind"] == "tube":                  # outer+inner, the builder bores it
+                assert 0.0 < s["inner_radius"] < s["outer_radius"], (t, s["id"])
+        # every hollow eye/bore that joins a member is a unite-boss + subtract-bore PAIR
+        ids = {s["id"]: s for s in blue["build_steps"]}
+        for s in blue["build_steps"]:
+            if s["id"].endswith("_bore"):
+                assert s["boolean"] == "subtract", (t, s["id"])
+                boss = ids.get(s["id"][:-5])
+                assert boss is not None and boss["boolean"] == "unite", (t, s["id"])
+
+
+# --- guard the "Tool body completely outside target body" failure class --------- #
+def _step_bbox(s):
+    """AABB of a build-step body (cylinder/tube/prism), in the part's local frame."""
+    o = s["origin3"]
+    w = _unit(s["axis"])
+    L = s["length"]
+    if s["kind"] in ("cylinder", "tube"):
+        r = s["outer_radius"]
+    else:                                            # prism: max section vertex radius
+        r = max(math.hypot(pu, pv) for (pu, pv) in s["profile"])
+    lo = [math.inf] * 3
+    hi = [-math.inf] * 3
+    for tt in (0.0, L):
+        c = [o[i] + w[i] * tt for i in range(3)]
+        for i in range(3):
+            lo[i] = min(lo[i], c[i] - r)
+            hi[i] = max(hi[i], c[i] + r)
+    return lo, hi
+
+
+def _boxes_overlap(a, b):
+    (alo, ahi), (blo, bhi) = a, b
+    return all(alo[i] <= bhi[i] and blo[i] <= ahi[i] for i in range(3))
+
+
+@pytest.mark.parametrize("t", TYPES)
+def test_every_subtract_bore_hits_its_target(t):
+    """REGRESSION GUARD for the NX "Tool body completely outside target body" failure:
+    replay the build steps in order; for every boolean=='subtract', the ACCUMULATED
+    solid of its target (every create/unite body sharing that target emitted BEFORE the
+    subtract) must overlap the bore tool's bbox.  If it does not, NX rejects the bore
+    (it lands outside the target) -- leaving the feature SOLID and causing interference.
+    (This is exactly why three bores failed in NX while the interference check passed --
+    the perches/top-mount/ARB-bracket-eye are now STANDALONE tubes whose bore is coaxial
+    by construction, so the only subtracts left are real ones that DO hit their target.)"""
+    blue = bp.generate(SuspensionParams().overridden(**{"geometry.type": t}))
+    accum = {}                                       # target id -> [bbox, ...] so far
+    for s in blue["build_steps"]:
+        if s["boolean"] == "create":
+            accum.setdefault(s["id"], []).append(_step_bbox(s))
+        elif s["boolean"] == "unite":
+            accum.setdefault(s["target"], []).append(_step_bbox(s))
+        elif s["boolean"] == "subtract":
+            tgt = s.get("target")
+            boxes = accum.get(tgt)
+            assert boxes, (t, s["id"], "subtract before its target create")
+            tlo = [min(b[0][i] for b in boxes) for i in range(3)]
+            thi = [max(b[1][i] for b in boxes) for i in range(3)]
+            assert _boxes_overlap(_step_bbox(s), (tlo, thi)), (
+                t, "%s bore lands OUTSIDE target %s (NX would FAIL the subtract)"
+                % (s["id"], tgt))
+
+
+def test_every_boolean_targets_an_existing_create_after_redesign():
+    """Every subtract/unite (including the new fastener bores / united eyes) targets a
+    body an earlier create made -- so the NX builder never hits a missing-target skip."""
+    for t in TYPES:
+        blue = bp.generate(SuspensionParams().overridden(**{"geometry.type": t}))
+        created = set()
+        for s in blue["build_steps"]:
+            if s["boolean"] == "create":
+                created.add(s["id"])
+            else:
+                assert s["target"] in created, (t, s["id"], s["target"])
+
+
+def test_every_body_is_named():
+    """G) every build-step body carries a body_name (including the arm legs and every
+    fastener / sleeve) -- nothing is left "(unnamed)" as the NX inspector found."""
+    for t in TYPES:
+        for s in bp.generate(SuspensionParams().overridden(**{"geometry.type": t}))["build_steps"]:
+            assert s.get("body_name"), (t, s["id"])
+
+
+# --------------------------------------------------------------------------- #
+# (2) clean BY CONSTRUCTION -- structural assertions (the NX inspector confirms)
+# --------------------------------------------------------------------------- #
+def test_each_member_is_one_united_body_with_its_eyes():
+    """B) each link is ONE body: its eyes UNITE into its create (no separate eye body
+    overlapping its own link).  The toe link + its two eye bosses, and the anti-roll
+    link + its two eye bosses, must each be a single part."""
+    blue = bp.generate(SuspensionParams())
+    steps = _by_id(blue)
+    for create_id, eye_ids in (
+            ("toe_link_r", ("toe_eye_in_r", "toe_eye_out_r")),
+            ("antiroll_r", ("antiroll_eye_lo_r", "antiroll_eye_hi_r"))):
+        assert steps[create_id]["boolean"] == "create"
+        for eid in eye_ids:
+            assert steps[eid]["boolean"] == "unite", eid           # boss unites in
+            assert steps[eid]["target"] == create_id, eid
+            assert steps[eid + "_bore"]["target"] == create_id, eid  # bore cuts the link
+
+
+def test_arm_legs_and_hub_are_one_united_body():
+    """Each control arm is ONE body: the hub eye (create) + fore + aft leg segments
+    (unite) all share the single arm create id -- so the arm never overlaps its own
+    legs/eye (the LOWER_ARM_HUB <-> arm-leg interference is gone by union)."""
+    blue = bp.generate(SuspensionParams())
+    for role, hub_id in (("lower_arm", "lower_arm_hub_r"), ("upper_arm", "upper_arm_hub_r")):
+        members = [s for s in blue["build_steps"] if s["role"] == role]
+        creates = [s for s in members if s["boolean"] == "create"]
+        assert [c["id"] for c in creates] == [hub_id], role        # exactly one body
+        for s in members:
+            if s["boolean"] == "unite":
+                assert s["target"] == hub_id, s["id"]
+
+
+def test_every_pin_joint_has_a_dedicated_bolt():
+    """C) every pin joint between two members is a real bolted joint: a shank + head +
+    nut.  Assert a fastener trio exists at each inboard pickup, each toe joint, and each
+    anti-roll-link end, and that the shank is a SOLID round cylinder."""
+    blue = bp.generate(SuspensionParams())
+    steps = _by_id(blue)
+    joints = ["lower_fore", "lower_aft", "upper_fore", "upper_aft",
+              "toe_in", "toe_out", "antiroll_lo", "antiroll_hi"]
+    for j in joints:
+        for part in ("shank", "head", "nut"):
+            assert "%s_%s_r" % (j, part) in steps, (j, part)
+        assert steps["%s_shank_r" % j]["kind"] == "cylinder", j
+
+
+def test_pin_joint_bolt_is_thinner_than_the_bore_it_threads():
+    """C) the bolt shank Ø is the bore Ø minus a clearance, so the shank fills the
+    subtracted void without reaching the eye/sleeve material (no solid overlap) -- the
+    join is a bolt-in-hole, the physically correct clean fit."""
+    blue = bp.generate(SuspensionParams())
+    steps = _by_id(blue)
+    # toe outboard clevis: the bolt threads the knuckle steering-eye bore
+    steer_bore = _eye_bore(blue, "knuckle_steer_eye_r")
+    assert 2.0 * steps["toe_out_shank_r"]["outer_radius"] < steer_bore
+    # inboard bushing joints: the bolt threads the steel sleeve bore (a tube)
+    for j in ("lower_fore", "lower_aft", "toe_in"):
+        sleeve_bore, _ = _tube_bore_od(steps["%s_sleeve_r" % j])
+        assert 2.0 * steps["%s_shank_r" % j]["outer_radius"] < sleeve_bore, j
+
+
+def test_ball_joint_bridges_arm_eye_and_knuckle_socket_separated_on_kingpin():
+    """D) the ball joint is ONE body (a solid HOUSING disc + a UNITED STUD) bridging the
+    ARM eye and the KNUCKLE socket, which are SEPARATED along the kingpin axis by the
+    ball-joint length -- so the arm and the knuckle never share volume.  The housing OD
+    is the arm-eye bore minus a clearance (a clean press fit) and the stud OD is the
+    knuckle-socket bore minus a clearance: coaxial, bridged only by the ball joint."""
+    p = SuspensionParams()
+    blue = bp.generate(p)
+    steps = _by_id(blue)
+    hp = eng.hardpoints(p)
+    kp_axis = _unit(tuple(hp["upper_ball_joint"][i] - hp["lower_ball_joint"][i] for i in range(3)))
+    for arm, jhp, sock in (("lower", "lower_ball_joint", "knuckle_lbj_socket_r"),
+                           ("upper", "upper_ball_joint", "knuckle_ubj_socket_r")):
+        housing = steps["%s_bj_housing_r" % arm]            # SOLID disc in the arm-eye bore
+        stud = steps["%s_bj_stud_r" % arm]                  # rod into the knuckle socket
+        arm_eye = steps["%s_arm_hub_r" % arm]               # the arm hub is a tube ring
+        # housing + stud are ONE body (the stud unites into the housing create)
+        assert housing["boolean"] == "create" and housing["kind"] == "cylinder", arm
+        assert stud["boolean"] == "unite" and stud["target"] == housing["id"], arm
+        # housing OD fits the arm-eye bore with a clearance (a clean press fit)
+        arm_eye_bore, _ = _tube_bore_od(arm_eye)
+        hous_od = 2.0 * housing["outer_radius"]
+        assert hous_od < arm_eye_bore, arm
+        assert hous_od > arm_eye_bore - 4.0 * F.FIT_CLEARANCE - 0.1, arm
+        # stud OD fits the knuckle-socket bore with a clearance
+        sock_bore = _eye_bore(blue, sock)
+        assert 2.0 * stud["outer_radius"] < sock_bore, arm
+        # the arm eye (housing centre) and the knuckle socket sit on OPPOSITE sides of
+        # the joint along the kingpin axis, ~_BJ_HALF_SEP each -- the stud spans the gap.
+        joint = hp[jhp]
+        hc = tuple(housing["origin3"][i] + _unit(housing["axis"])[i] * housing["length"] / 2.0
+                   for i in range(3))
+        sep = abs(sum((hc[i] - joint[i]) * kp_axis[i] for i in range(3)))
+        assert sep == pytest.approx(bp._BJ_HALF_SEP, abs=3.0), arm
+
+
+def test_inboard_bushing_sleeve_fills_can_bore_and_bolt_clears(  ):
+    """E) at each inboard pickup the bushing is concentric with STRICT diameter nesting
+    and a clearance gap at every step (so NX point-in-solid reads it ~0, not as an
+    interference): can OD > can bore > sleeve OD > sleeve bore > bolt shank, each with a
+    real radial gap.  The sleeve sits in the can's subtracted void, the bolt in the
+    sleeve's; all coaxial."""
+    blue = bp.generate(SuspensionParams())
+    steps = _by_id(blue)
+    for joint in ("lower_fore", "lower_aft", "upper_fore", "upper_aft"):
+        can = steps["%s_can_r" % joint]
+        sleeve = steps["%s_sleeve_r" % joint]
+        shank = steps["%s_shank_r" % joint]
+        assert _dist(_unit(can["axis"]), _unit(sleeve["axis"])) < 1e-6, joint   # coaxial
+        can_od, can_bore = 2.0 * can["outer_radius"], 2.0 * can["inner_radius"]
+        sl_od, sl_bore = 2.0 * sleeve["outer_radius"], 2.0 * sleeve["inner_radius"]
+        bolt = 2.0 * shank["outer_radius"]
+        gap = 2.0 * F.FIT_CLEARANCE - 1e-6
+        assert can_od > can_bore, joint
+        assert sl_od <= can_bore - gap, joint          # sleeve clears the can bore
+        assert sl_bore > bolt, joint                   # bolt clears the sleeve bore
+
+
+@pytest.mark.parametrize("t", TYPES)
+def test_distinct_solid_members_do_not_grossly_overlap(t):
+    """A gross-overlap guard using the part of clearance.py that is RELIABLE: SOLID
+    members that should be FULLY APART -- the two control arms, and the lower arm vs the
+    toe link -- must not interpenetrate.  (Bored/hollow pairs -- the knuckle, eyes,
+    bushings, bolts -- and bolted attachments -- the ARB drop link onto the lower arm --
+    are NOT checked here because clearance.py is blind to their subtracted bores / shared
+    joint and would over-report; nx_inspect.py is their arbiter.)"""
+    blue = bp.generate(SuspensionParams().overridden(**{"geometry.type": t}))
+    steps = blue["build_steps"]
+
+    def solids_of(create_id):
+        # the create body + everything united into it, as oriented solids
+        ids = {create_id} | {s["id"] for s in steps
+                             if s["boolean"] == "unite" and s.get("target") == create_id}
+        out = []
+        for s in steps:
+            if s["id"] in ids:
+                b = clr._world_body(s, _IDENTITY, [0.0, 0.0, 0.0])
+                if b is not None:
+                    out.append(b)
+        return out
+
+    # members that are genuinely separated (not joined by a shared bolt/bore):
+    # the lower arm <-> upper arm, and the lower arm <-> toe link.
+    pairs = [("lower_arm_hub_r", "toe_link_r")]
+    if t in ("multilink", "double_wishbone"):
+        pairs.append(("lower_arm_hub_r", "upper_arm_hub_r"))
+        pairs.append(("upper_arm_hub_r", "toe_link_r"))
+    for a, b in pairs:
+        res = clr.solids_interpenetrate(solids_of(a), solids_of(b), touch_tol=clr.TOUCH_TOL_MM)
+        assert res is None or res[0] <= clr.TOUCH_TOL_MM, (t, a, b, res)
