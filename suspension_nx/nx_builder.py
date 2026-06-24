@@ -19,6 +19,8 @@ import os
 import sys
 import traceback
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # motor_nx.nx_builder imports NXOpen at module load, so importing it here only
 # succeeds inside NX (run_journal) -- exactly as intended for this journal.
 from motor_nx import nx_builder as eng
