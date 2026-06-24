@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nx-inspect"
+version = "1.0.0"
+description = "Professional, open-source model-quality inspector for Siemens NX parts (interference, slivers, duplicates, naming)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "nx_inspect contributors" }]
+keywords = ["siemens-nx", "nx", "cad", "model-quality", "inspection", "interference", "dfm"]
+dependencies = []  # standard library only, by design
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/nx-inspect/nx-inspect"
+Source = "https://github.com/nx-inspect/nx-inspect"
+Issues = "https://github.com/nx-inspect/nx-inspect/issues"
+
+[project.scripts]
+nx-inspect = "nx_inspect.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=6.0"]
+
+[tool.setuptools]
+packages = ["nx_inspect"]
+
+[tool.setuptools.package-data]
+# Ship the NX-side journal so `nx-inspect part.prt` can hand it to run_journal.
+nx_inspect = ["journal/*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
