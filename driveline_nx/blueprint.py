@@ -117,17 +117,24 @@ def differential_steps(p: DrivelineParams) -> List[BuildStep]:
             target="diff_input_flange", body_name="Input_Keyway", material="air", color=COL_AIR,
             profile=key, z0=zc + d.ring_gear_face_width / 2.0 - 0.5,
             length=d.input_flange_thickness + 1.0))
-    # flange-to-coupling bolt circle
+    # flange-to-coupling bolt circle. The flange is PARALLEL-AXIS (offset in +X), but
+    # the engine's circular pattern rotates about the GLOBAL Z (the wheel axis at the
+    # origin) -- so a patterned bolt would swing about the origin and fall completely
+    # outside the offset flange (NX: "Tool body completely outside target body"). Emit
+    # EXPLICIT instances around the flange's OWN centre (offset, 0) instead.
     if d.input_flange_bolt_count > 0 and d.input_flange_bolt_diameter > 0:
-        pr = offset + 0.0  # bolts about the flange centre
         bc = 0.5 * (d.input_bore_diameter / 2.0 + d.input_flange_diameter / 2.0)
-        steps.append(BuildStep(
-            id="diff_input_flange_bolt", role="flange_bolt_cut", kind="cylinder", boolean="subtract",
-            target="diff_input_flange", body_name="Coupling_Bolt", material="air", color=COL_AIR,
-            outer_radius=d.input_flange_bolt_diameter / 2.0, cx=offset + bc, cy=0.0,
-            z0=zc + d.ring_gear_face_width / 2.0 - 0.5, length=d.input_flange_thickness + 1.0,
-            pattern_count=d.input_flange_bolt_count,
-            pattern_angle_deg=360.0 / d.input_flange_bolt_count))
+        n = d.input_flange_bolt_count
+        for i in range(n):
+            th = 2.0 * math.pi * i / n
+            steps.append(BuildStep(
+                id="diff_input_flange_bolt_%d" % i, role="flange_bolt_cut", kind="cylinder",
+                boolean="subtract", target="diff_input_flange",
+                body_name="Coupling_Bolt_%d" % i, material="air", color=COL_AIR,
+                outer_radius=d.input_flange_bolt_diameter / 2.0,
+                cx=offset + bc * math.cos(th), cy=bc * math.sin(th),
+                z0=zc + d.ring_gear_face_width / 2.0 - 0.5,
+                length=d.input_flange_thickness + 1.0))
     return steps
 
 

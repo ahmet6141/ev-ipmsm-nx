@@ -78,6 +78,26 @@ def _build_part(blueprint, out_path, log):
     builder = eng.MotorBuilder(part, blueprint.get("stack_length", 200.0))
     builder.log("=== vehicle_nx subassembly: %s ===" % blueprint.get("name", "part"))
     builder.build(blueprint)
+    # Name each created body from its blueprint body_name. The per-subsystem FEA/CAM
+    # role maps live in each package's nx_builder, which we must NOT import here --
+    # importing would AUTO-RUN their main() (the module guard fires whenever
+    # UGII_ROOT_DIR is set, i.e. in every NX session) and rebuild that subsystem
+    # standalone. body_name is carried on every build step, so name straight from the
+    # builder's id->body registry instead (this also fixes the "no bodies were named"
+    # warning the motor avoided only because the engine's default map is the motor's).
+    named = 0
+    for step in blueprint.get("build_steps", []):
+        if step.get("boolean") != "create":
+            continue
+        body = builder.bodies.get(step["id"])
+        nm = step.get("body_name")
+        if body is not None and nm:
+            try:
+                body.SetName(nm)
+                named += 1
+            except Exception:
+                pass
+    log("named %d subsystem bodies from blueprint body_name" % named)
     eng._save(part)
     log("built subsystem part: %s (%d step error(s))" % (out_path, len(builder.errors)))
     try:
@@ -125,7 +145,7 @@ def _add_component(asm, part_path, name, origin, orient, layer, log):
 
 
 def assemble(plan, out_prt, log):
-    asm = eng._unpack_part(_SESSION.Parts.NewDisplay(out_prt, _mm_units()))
+    asm = _new_assembly_part(out_prt)
     work = _SESSION.Parts.Work
     ca = work.ComponentAssembly
     added = 0
@@ -143,11 +163,38 @@ def assemble(plan, out_prt, log):
     log("=== vehicle assembly: %d/%d components added -> %s ===" % (added, len(plan["components"]), out_prt))
 
 
-def _mm_units():
-    vals = eng._mm_unit_values()
-    if not vals:
-        raise RuntimeError("Millimeters part-units enum not available")
-    return vals[0]
+def _new_assembly_part(out_prt):
+    """Create the top assembly DISPLAY part in millimetres, robust to NX's units-enum
+    drift. CRITICAL: Parts.NewDisplay wants an NXOpen.Part.Units value, whereas
+    new_mm_part / Parts.NewBaseDisplay want NXOpen.BasePart.Units -- passing the latter
+    to NewDisplay raises 'Expecting NXOpen.Part.Units type, found BasePartUnits...'.
+    Try every (factory, units) spelling until one builds, deleting a stale/locked file
+    first (mirrors motor_nx.new_mm_part)."""
+    d = os.path.dirname(out_prt)
+    if d and not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+    if os.path.exists(out_prt):
+        try:
+            os.remove(out_prt)  # NewDisplay/NewBaseDisplay refuse an existing name
+        except OSError:
+            pass
+    # units candidates, Part.Units FIRST (the type NewDisplay needs on NX 2506)
+    units = []
+    for getter in (lambda: NXOpen.Part.Units.Millimeters,
+                   lambda: NXOpen.BasePart.Units.Millimeters,
+                   lambda: getattr(NXOpen, "BasePartUnits").Millimeters):
+        try:
+            units.append(getter())
+        except Exception:
+            pass
+    last = None
+    for u in units:
+        for factory in (_SESSION.Parts.NewDisplay, _SESSION.Parts.NewBaseDisplay):
+            try:
+                return eng._unpack_part(factory(out_prt, u))
+            except Exception as exc:
+                last = exc
+    raise RuntimeError("could not create mm assembly display part: %s" % last)
 
 
 def _resolve_part(name):
