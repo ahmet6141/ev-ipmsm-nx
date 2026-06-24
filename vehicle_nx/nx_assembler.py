@@ -160,41 +160,25 @@ def assemble(plan, out_prt, log):
     _SESSION.UpdateManager.DoUpdate(
         _SESSION.SetUndoMark(NXOpen.Session.MarkVisibility.Visible, "assemble"))
     eng._save(work)
-    log("=== vehicle assembly: %d/%d components added -> %s ===" % (added, len(plan["components"]), out_prt))
+    actual = getattr(work, "FullPath", out_prt) or out_prt
+    log("=== vehicle assembly: %d/%d components added -> %s ===" % (added, len(plan["components"]), actual))
 
 
 def _new_assembly_part(out_prt):
-    """Create the top assembly DISPLAY part in millimetres, robust to NX's units-enum
-    drift. CRITICAL: Parts.NewDisplay wants an NXOpen.Part.Units value, whereas
-    new_mm_part / Parts.NewBaseDisplay want NXOpen.BasePart.Units -- passing the latter
-    to NewDisplay raises 'Expecting NXOpen.Part.Units type, found BasePartUnits...'.
-    Try every (factory, units) spelling until one builds, deleting a stale/locked file
-    first (mirrors motor_nx.new_mm_part)."""
-    d = os.path.dirname(out_prt)
-    if d and not os.path.isdir(d):
-        os.makedirs(d, exist_ok=True)
-    if os.path.exists(out_prt):
-        try:
-            os.remove(out_prt)  # NewDisplay/NewBaseDisplay refuse an existing name
-        except OSError:
-            pass
-    # units candidates, Part.Units FIRST (the type NewDisplay needs on NX 2506)
-    units = []
-    for getter in (lambda: NXOpen.Part.Units.Millimeters,
-                   lambda: NXOpen.BasePart.Units.Millimeters,
-                   lambda: getattr(NXOpen, "BasePartUnits").Millimeters):
-        try:
-            units.append(getter())
-        except Exception:
-            pass
-    last = None
-    for u in units:
-        for factory in (_SESSION.Parts.NewDisplay, _SESSION.Parts.NewBaseDisplay):
-            try:
-                return eng._unpack_part(factory(out_prt, u))
-            except Exception as exc:
-                last = exc
-    raise RuntimeError("could not create mm assembly display part: %s" % last)
+    """Create the top assembly part in millimetres by REUSING motor_nx.new_mm_part.
+
+    The earlier bespoke Parts.NewDisplay path failed twice on this NX 2506 install:
+    first a units-type mismatch (NewDisplay wants NXOpen.Part.Units, not the
+    BasePart.Units that NewBaseDisplay wants), then 'File already exists' even after the
+    on-disk file was removed -- because the part NAME is still loaded/locked in the
+    session (a prior run or an open GUI), which deleting the file cannot free.
+
+    new_mm_part already solves both: it uses the proven NewBaseDisplay +
+    NXOpen.BasePart.Units.Millimeters enum and, on an 'exists'/locked name, falls
+    through to the next free name (vehicle_out_1.prt, ...). It just built all five
+    subsystem parts this session, and any modeling part can host Assemblies.AddComponent,
+    so the returned part (which becomes Parts.Work) is a valid assembly root."""
+    return eng.new_mm_part(out_prt, make_displayed=True)
 
 
 def _resolve_part(name):
