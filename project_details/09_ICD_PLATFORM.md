@@ -83,3 +83,74 @@ Match `motor_nx` package quality: NX-independent + unit-tested geometry, an
 named expressions, material-role body names for FEA/CAM, and per-part STEP export
 grouping. Every redesigned package keeps `python -m pytest` green and adds tests for
 the new geometry (world bounding boxes, connectivity, mating-point coordinates).
+
+## 7. Integration architecture — connector parts (NO interpenetration, real interfaces)
+
+The first NX vehicle build exposed two unphysical joints: the **motor and differential
+interpenetrate** (envelopes overlap ~193×253×143 mm) and the **suspension floats** (its
+inboard pickups land ~160–240 mm inboard of the rails with nothing to bolt to, and the
+spring/damper tops reach up to z≈690 with no body mount). Industry practice connects
+these through dedicated parts; this section pins those interfaces. **Hard rule: in the
+assembled vehicle no two component solids may interpenetrate** (assembly `validate()`
+must enforce it with a vehicle-frame AABB overlap check — bolt-clearance touching is OK,
+solid overlap is not).
+
+### 7.1 E-axle — motor ↔ reduction gearbox ↔ differential  (new package `gearbox_nx`)
+
+- Wheel/diff axis: vehicle `(axle_x, *, r)` along **Y**. Motor & diff axes are **parallel**
+  (both along Y after Rx(−90)); they must NOT be coaxial and must NOT overlap.
+- **Clearance rule**: motor-to-diff centre distance ≥ `motor_OD/2 + ring_gear_pitch/2 +
+  15 mm` (defaults: 112 + 104 + 15 = **231 mm**). The motor sits toward the vehicle
+  centre-plane and above the axle: default offset `dx≈+155` (toward centre), `dz≈+175`
+  → centre distance ≈ 234 mm (clears). The assembler must place the motor at this offset
+  (replacing the old 60/110 mm that caused the overlap) — sign of `dx` is toward the
+  vehicle centre for that axle.
+- A **2-stage parallel reduction** spans the gap (motor pinion → idler gear+pinion on a
+  layshaft → diff ring gear), total ratio ~9–10:1; gears may be representative blanks at
+  pitch diameter (the established envelope philosophy), but the two centre distances must
+  sum to the motor-diff offset so the train physically reaches.
+- **`gearbox_nx` = the connector**: a cast reduction housing that **bolts to the motor DE
+  flange** (the motor already has a DE mounting flange + bolt circle — match its diameter
+  and PCD) and **encloses/mounts the differential carrier**, bridging motor↔diff with no
+  gap and no overlap. Local frame: +Z = the gear axes (like the motor/driveline), so the
+  assembler places it with the same Rx(−90). Expose: `motor_flange_face`, `diff_mount_face`,
+  the two centre distances, and the housing envelope. The driveline's existing input
+  pinion/flange is the gearbox OUTPUT→diff interface.
+
+### 7.2 Chassis ↔ suspension ↔ e-axle  (new package `subframe_nx`)
+
+- The suspension corner is datumed on the hub centre (ICD §3); its inboard hardpoints, in
+  vehicle coords for the rear-left corner (origin `HUB_CENTRE=(−1437.5, +790, 335)`), are
+  approx: lower pickups `(−1310/−1550, 344, 277)`, upper pickups `(±, 424, 386)`, toe
+  `(−1606, 412, 343)`, damper/strut top `(−1437, 427, 692)`. The chassis already carries
+  **subframe mount pads at the axle x-stations on the rails** (rail centre-line y=±585,
+  rail top z≈400).
+- **`subframe_nx` = the cradle** that closes both gaps: it **bolts up to the chassis
+  subframe pads** (y=±585, z≈400, at the axle x-station) and reaches inboard/down to
+  present **suspension inboard pickup bosses at the hardpoint coordinates above**, plus the
+  **e-axle/diff mounts**. Front and rear variants. Build it in the **vehicle frame**
+  (like the chassis) so the assembler places it at identity per axle (origin at the axle
+  x-station). Expose every pickup-boss centre and the chassis-pad bolt locations.
+- The suspension assembler placement is unchanged (hub centre → `HUB_CENTRE`); after the
+  subframe exists, the suspension inboard pickups COINCIDE with the subframe bosses
+  (assembly `validate()` asserts the coincidence, like the hub-coincidence check).
+- Spring/damper/strut tops mount to a **body/shock-tower** interface: add a tower boss to
+  the chassis (or subframe) at the damper/strut-top coordinates so the top is supported
+  (no floating spring).
+
+### 7.3 Suspension realism
+
+- Make the links read as real components: A-arms as two-leg (fore/aft) members converging
+  from the inboard pickups to the ball joint (not isolated bars), the toe link reaching
+  the steering pickup, the coil-over (spring around damper) seated on the lower arm and
+  the tower top. Keep the hardpoint table as the single source of truth; just make the
+  geometry follow it convincingly (sensible cross-sections, no mid-air stubs).
+
+### 7.4 Validation to add (assembly)
+
+1. **No interpenetration**: vehicle-frame AABB (better: sampled solid) overlap between every
+   pair of non-chassis components is empty (motor∩diff, motor∩subframe, suspension∩rail
+   beyond the notch, …). This is the headline acceptance check.
+2. **Mating coincidence**: gearbox motor-flange ≡ motor DE flange; gearbox diff-mount ≡ diff;
+   subframe pads ≡ chassis pads; subframe pickup bosses ≡ suspension inboard pickups;
+   damper/strut top ≡ tower boss. Each within a small tolerance.
