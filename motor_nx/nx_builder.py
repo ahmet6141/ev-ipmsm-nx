@@ -258,6 +258,46 @@ class MotorBuilder:
         return self.part.Curves.CreateArc(
             _p3(*base), _v3(*u), _v3(*v), float(radius), 0.0, 2.0 * math.pi)
 
+    @staticmethod
+    def _prism_frame(axis, u_dir):
+        """Right-handed (u, v, w) frame for a prism: w = unit(axis) (extrude
+        direction), u = unit component of u_dir perpendicular to w, v = w x u.
+        Falls back to a stable perpendicular when u_dir is parallel to axis.
+        Mirrors motor_nx.blueprint.prism_frame so the in-NX geometry matches the
+        NX-free world bounding boxes used by the tests."""
+        ax, ay, az = axis
+        n = math.sqrt(ax * ax + ay * ay + az * az) or 1.0
+        wx, wy, wz = ax / n, ay / n, az / n
+        ux, uy, uz = u_dir
+        d = ux * wx + uy * wy + uz * wz
+        ux, uy, uz = ux - d * wx, uy - d * wy, uz - d * wz
+        if math.sqrt(ux * ux + uy * uy + uz * uz) < 1e-9:
+            helper = (0.0, 0.0, 1.0) if abs(wz) < 0.9 else (1.0, 0.0, 0.0)
+            ux = wy * helper[2] - wz * helper[1]
+            uy = wz * helper[0] - wx * helper[2]
+            uz = wx * helper[1] - wy * helper[0]
+        un = math.sqrt(ux * ux + uy * uy + uz * uz) or 1.0
+        ux, uy, uz = ux / un, uy / un, uz / un
+        vx = wy * uz - wz * uy
+        vy = wz * ux - wx * uz
+        vz = wx * uy - wy * ux
+        return (ux, uy, uz), (vx, vy, vz), (wx, wy, wz)
+
+    def _lines_from_profile_3d(self, profile_uv, origin3, axis, u_dir):
+        """Closed loop of dumb lines for a 2D (u, v) profile placed at `origin3`,
+        oriented by (axis, u_dir) -- the arbitrary-orientation analogue of
+        :meth:`_lines_from_polygon`. Used by the 'prism' build step."""
+        (uxx, uxy, uxz), (vxx, vxy, vxz), _ = self._prism_frame(axis, u_dir)
+        ox, oy, oz = origin3
+        pts = [(ox + pu * uxx + pv * vxx,
+                oy + pu * uxy + pv * vxy,
+                oz + pu * uxz + pv * vxz) for (pu, pv) in profile_uv]
+        curves = []
+        n = len(pts)
+        for i in range(n):
+            curves.append(self.part.Curves.CreateLine(_p3(*pts[i]), _p3(*pts[(i + 1) % n])))
+        return curves
+
     def _extrude_on_axis(self, curves, base, axis, length, op, target_body):
         """Extrude a closed curve loop along an ARBITRARY axis (not just +Z).
         Mirrors :meth:`_extrude` but with a caller-supplied direction -- the radial
@@ -324,6 +364,35 @@ class MotorBuilder:
         a = math.radians(deg)
         c, s = math.cos(a), math.sin(a)
         return [[x * c - y * s, x * s + y * c] for x, y in points]
+
+    def _rotate_pt_z(self, p, deg):
+        """Rotate a 3D point about the Z axis by `deg` (Z unchanged)."""
+        x, y = self._rotate2d([[p[0], p[1]]], deg)[0]
+        return (x, y, p[2])
+
+    def _rotate_vec_z(self, v, deg):
+        """Rotate a 3D vector about the Z axis by `deg` (Z component unchanged)."""
+        x, y = self._rotate2d([[v[0], v[1]]], deg)[0]
+        return (x, y, v[2])
+
+    @staticmethod
+    def _is_axis_placed(step):
+        """True when a tube/cylinder asks for ARBITRARY-axis placement: an explicit
+        origin3, or an `axis` that is not the default +Z. (Keeps the proven +Z path
+        for every legacy step that sets neither.)"""
+        if step.get("origin3") is not None:
+            return True
+        ax = step.get("axis", [0.0, 0.0, 1.0])
+        return abs(ax[0]) > 1e-9 or abs(ax[1]) > 1e-9 or abs(float(ax[2]) - 1.0) > 1e-9
+
+    @staticmethod
+    def _axis_base(step):
+        """Base point for an axis-placed primitive: origin3 if given, else the legacy
+        (cx, cy, z0)."""
+        o3 = step.get("origin3")
+        if o3 is not None:
+            return (float(o3[0]), float(o3[1]), float(o3[2]))
+        return (float(step.get("cx", 0.0)), float(step.get("cy", 0.0)), float(step.get("z0", 0.0)))
 
     @staticmethod
     def _count_pitch_spacing():
@@ -418,19 +487,62 @@ class MotorBuilder:
                 "earlier (see the first FAIL above)" % step["target"])
 
         if kind == "tube":
-            outer = self._circle_curve(0.0, 0.0, step["outer_radius"], z0)
-            feat = self._extrude([outer], z0, length, "create", None, use_stack)
-            body = self._feature_body(feat)
-            inner = self._circle_curve(0.0, 0.0, step["inner_radius"], z0)
-            self._extrude([inner], z0, length, "subtract", body, use_stack)
-            self.bodies[step["id"]] = body
-            self._name_body(step["id"], 0, body)
+            if self._is_axis_placed(step):
+                # tube coaxial with an ARBITRARY axis through origin3 (lateral bar,
+                # inclined sleeve): outer cylinder-on-axis (create) - inner (subtract).
+                base = self._axis_base(step)
+                axis = step.get("axis", [0.0, 0.0, 1.0])
+                outer = self._circle_curve_on_axis(base, axis, step["outer_radius"])
+                feat = self._extrude_on_axis([outer], base, axis, length, "create", None)
+                body = self._feature_body(feat)
+                inner = self._circle_curve_on_axis(base, axis, step["inner_radius"])
+                self._extrude_on_axis([inner], base, axis, length, "subtract", body)
+                self.bodies[step["id"]] = body
+                self._name_body(step["id"], 0, body)
+            else:
+                outer = self._circle_curve(0.0, 0.0, step["outer_radius"], z0)
+                feat = self._extrude([outer], z0, length, "create", None, use_stack)
+                body = self._feature_body(feat)
+                inner = self._circle_curve(0.0, 0.0, step["inner_radius"], z0)
+                self._extrude([inner], z0, length, "subtract", body, use_stack)
+                self.bodies[step["id"]] = body
+                self._name_body(step["id"], 0, body)
+
+        elif kind == "prism":
+            # extrude a 2D (u,v) profile along an ARBITRARY axis at an arbitrary world
+            # origin -- beams/plates in true vehicle coordinates. A circular pattern
+            # about Z rotates BOTH the origin and the (axis, u_dir) in XY (like 'hole').
+            count = int(step.get("pattern_count", 1))
+            angle = step.get("pattern_angle_deg", 0.0)
+            base = self._axis_base(step)
+            axis = step.get("axis", [0.0, 0.0, 1.0])
+            u_dir = step.get("u_dir", [1.0, 0.0, 0.0])
+            for i in range(max(1, count)):
+                o3 = self._rotate_pt_z(base, i * angle)
+                ax = self._rotate_vec_z(axis, i * angle)
+                ud = self._rotate_vec_z(u_dir, i * angle)
+                curves = self._lines_from_profile_3d(step["profile"], o3, ax, ud)
+                feat = self._extrude_on_axis(curves, o3, ax, length, op, target)
+                if op == "create":
+                    self._register(step["id"], i, self._feature_body(feat))
 
         elif kind == "cylinder":
             count = int(step.get("pattern_count", 1))
             angle = step.get("pattern_angle_deg", 0.0)
             cx0, cy0 = step.get("cx", 0.0), step.get("cy", 0.0)
-            if count > 1 and self.use_nx_patterns:
+            if self._is_axis_placed(step):
+                # cylinder coaxial with an ARBITRARY axis through origin3 (inclined
+                # damper, lateral stub). Circular pattern about Z like 'hole'.
+                base = self._axis_base(step)
+                axis = step.get("axis", [0.0, 0.0, 1.0])
+                for i in range(max(1, count)):
+                    o3 = self._rotate_pt_z(base, i * angle)
+                    ax = self._rotate_vec_z(axis, i * angle)
+                    circ = self._circle_curve_on_axis(o3, ax, step["outer_radius"])
+                    feat = self._extrude_on_axis([circ], o3, ax, length, op, target)
+                    if op == "create":
+                        self._register(step["id"], i, self._feature_body(feat))
+            elif count > 1 and self.use_nx_patterns:
                 circ = self._circle_curve(cx0, cy0, step["outer_radius"], z0)
                 feat = self._extrude([circ], z0, length, op, target, use_stack)
                 if op == "create":

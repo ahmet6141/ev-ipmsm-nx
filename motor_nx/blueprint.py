@@ -4,9 +4,13 @@ steps* plus JSON. NO NX dependency -- runs under plain CPython and is unit-teste
 A :class:`BuildStep` is a deliberately small, version-independent instruction the
 NX builder knows how to execute:
 
-    kind="tube"      -> hollow cylinder on the Z axis (outer/inner radius)
-    kind="cylinder"  -> solid cylinder, optionally offset to (cx, cy)
+    kind="tube"      -> hollow cylinder on the Z axis (outer/inner radius); honours
+                        origin3/axis for a tube coaxial with an ARBITRARY axis
+    kind="cylinder"  -> solid cylinder, optionally offset to (cx, cy); honours
+                        origin3/axis for a cylinder coaxial with an ARBITRARY axis
     kind="extrude"   -> extrude a closed XY polygon from z0 along +Z by `length`
+    kind="prism"     -> extrude a closed (u, v) polygon along an ARBITRARY axis at an
+                        arbitrary world origin (beams/plates in true vehicle coords)
     kind="revolve"   -> revolve a closed (r, z) polygon 360 deg about Z
 
 Each step also carries a boolean op (create / subtract / unite), an optional
@@ -81,8 +85,22 @@ class BuildStep:
     # kind="hole": a cylindrical hole on an ARBITRARY axis (radial ports, oil cross-
     # holes, ...). base point = (cx, cy, z0), direction = `axis` (need not be +Z),
     # radius = outer_radius, depth = length. A circular `pattern` (count/angle about
-    # Z) rotates BOTH the base point and the axis. (tube/cylinder/extrude stay +Z.)
+    # Z) rotates BOTH the base point and the axis. (the legacy +Z tube/cylinder/extrude
+    # paths ignore `axis`.)
     axis: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+    # ----- ARBITRARY-ORIENTATION placement (kind="prism" + axis-placed cylinder/tube) -----
+    # kind="prism": extrude the 2D `profile` (interpreted as local u,v points) along
+    # `axis` by `length`, with the profile plane placed at `origin3` (world x,y,z),
+    # local +u along `u_dir` (projected perpendicular to axis) and +v = axis x u.
+    # This is the general beam/plate primitive: a rail along +X, a crossmember along
+    # +Y, an inclined link -- all in TRUE vehicle coordinates. (+Z extrude == prism
+    # with axis=+Z, u_dir=+X, origin3=(0,0,z0): callers that want the proven +Z path
+    # keep using kind="extrude".)
+    # cylinder/tube ALSO honour origin3/axis: when `origin3` is set (or `axis` != +Z)
+    # the body is built coaxial with `axis` through `origin3` (an inclined damper, a
+    # lateral tie bar) instead of the default +Z column at (cx, cy, z0).
+    origin3: Optional[Tuple[float, float, float]] = None
+    u_dir: Tuple[float, float, float] = (1.0, 0.0, 0.0)
 
     def as_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -163,6 +181,51 @@ def _round_corner(p0: Point, p1: Point, p2: Point, radius: float, segs: int = 5)
         da += 2 * math.pi
     return [(cx + r * math.cos(a1 + da * i / segs),
              cy + r * math.sin(a1 + da * i / segs)) for i in range(segs + 1)]
+
+
+# --------------------------------------------------------------------------- #
+# 3D placement frame for arbitrary-orientation prisms / axis-placed primitives
+# --------------------------------------------------------------------------- #
+Vec3 = Tuple[float, float, float]
+
+
+def _norm3(v: Vec3) -> Vec3:
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) or 1.0
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _cross3(a: Vec3, b: Vec3) -> Vec3:
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
+def prism_frame(axis: Vec3, u_dir: Vec3) -> Tuple[Vec3, Vec3, Vec3]:
+    """Right-handed orthonormal frame (u, v, w) for a prism: w = unit(axis) is the
+    extrude direction; u = unit component of u_dir perpendicular to w; v = w x u.
+    If u_dir is (near) parallel to axis, a stable fallback perpendicular is chosen.
+    Pure-math twin of the NX builder's frame, so blueprints/tests can map profiles
+    to world coordinates without NX."""
+    w = _norm3(axis)
+    d = u_dir[0] * w[0] + u_dir[1] * w[1] + u_dir[2] * w[2]
+    u = (u_dir[0] - d * w[0], u_dir[1] - d * w[1], u_dir[2] - d * w[2])
+    if math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]) < 1e-9:
+        helper = (0.0, 0.0, 1.0) if abs(w[2]) < 0.9 else (1.0, 0.0, 0.0)
+        u = _cross3(w, helper)
+    u = _norm3(u)
+    v = _cross3(w, u)
+    return u, v, w
+
+
+def profile_to_world(profile_uv: List[Point], origin3: Vec3, axis: Vec3,
+                     u_dir: Vec3 = (1.0, 0.0, 0.0)) -> List[Vec3]:
+    """Map 2D (u, v) profile points to world (x, y, z) for a prism placed at
+    `origin3`, oriented by (axis, u_dir). Used for NX-free world bounding boxes."""
+    u, v, _ = prism_frame(axis, u_dir)
+    ox, oy, oz = origin3
+    return [(ox + pu * u[0] + pv * v[0],
+             oy + pu * u[1] + pv * v[1],
+             oz + pu * u[2] + pv * v[2]) for (pu, pv) in profile_uv]
 
 
 def _round_polygon(poly: List[Point], radius: float, corners=None, segs: int = 5) -> List[Point]:
