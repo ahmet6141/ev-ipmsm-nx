@@ -13,7 +13,13 @@
     "back_iron_mm": 13.0,
     "tooth_width_mm": 5.6,
     "outer_bridge_mm": 1.0,
-    "center_post_halfwidth_mm": 1.0
+    "center_post_halfwidth_mm": 1.0,
+    "magnet_thickness_mm": 4.5,
+    "magnet_width_mm": 26.0,
+    "v_angle_deg": 145.0,
+    "magnets_per_pole": 2,
+    "vertex_gap_mm": 38.0,
+    "end_barrier_mm": 1.5
   },
   "symmetry_and_bc": {
     "fea_sector": "1 pole",
@@ -392,10 +398,10 @@
   },
   "operating_points": {
     "dc_bus_V": 400.0,
-    "base_speed_rpm": 3480,
+    "base_speed_rpm": 3623,
     "max_speed_rpm": 18000,
-    "corner_torque_Nm": 458,
-    "continuous_torque_Nm": 211
+    "corner_torque_Nm": 440,
+    "continuous_torque_Nm": 203
   },
   "mesh": {
     "airgap_radial_layers": 3,
@@ -466,8 +472,8 @@
     }
   ],
   "acceptance_targets": {
-    "peak_torque_Nm_min": 412,
-    "continuous_torque_Nm_min": 190,
+    "peak_torque_Nm_min": 396,
+    "continuous_torque_Nm_min": 183,
     "torque_ripple_pct_max": 5.0,
     "cogging_pct_of_rated_max": 1.0,
     "no_demag_at": "peak current AND 150 C magnet temp",

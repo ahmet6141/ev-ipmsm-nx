@@ -121,8 +121,13 @@ GEOM_VARS = [
 ]
 
 
-def connect(open_new, keep_open):
+def connect(open_new, keep_open, exe=None):
     print("Connecting to Motor-CAD ...")
+    if exe:
+        # PyMotorCAD auto-finds Motor-CAD via the MOTORCAD_ACTIVEX env var / registry;
+        # if that is not set (common for a portable/custom install) point it explicitly.
+        pymotorcad.set_motorcad_exe(exe)
+        print("  using exe: %s" % exe)
     kwargs = {}
     if keep_open:
         kwargs["keep_instance_open"] = True
@@ -505,6 +510,8 @@ def main(argv=None):
                     help="Motor-CAD rotor template to start from (\"\" to skip)")
     ap.add_argument("--keep-open", action="store_true", help="keep the Motor-CAD instance open")
     ap.add_argument("--new-instance", action="store_true", help="force a new Motor-CAD instance")
+    ap.add_argument("--exe", default=os.environ.get("MOTORCAD_EXE", ""),
+                    help="path to the Motor-CAD .exe (or set MOTORCAD_EXE) if PyMotorCAD can't auto-find it")
     args = ap.parse_args(argv)
 
     with open(args.spec, "r", encoding="utf-8") as fh:
@@ -514,7 +521,7 @@ def main(argv=None):
     print("spec: %s   stages: %s\n" % (args.spec, ", ".join(stages)))
 
     t0 = time.time()
-    mc = connect(args.new_instance, args.keep_open)
+    mc = connect(args.new_instance, args.keep_open, args.exe or None)
     load_topology(mc, args.template)
     apply_geometry(mc, spec)
     apply_winding(mc, spec)

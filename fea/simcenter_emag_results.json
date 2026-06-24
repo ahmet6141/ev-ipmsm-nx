@@ -1,0 +1,170 @@
+{
+  "design": "EV_IPMSM_traction",
+  "spec_path": "C:\\Users\\ahmet\\Desktop\\web\\motor\\fea\\fea_spec.json",
+  "discipline": "EM",
+  "losses": {
+    "source": "analysis.loss_breakdown SEED -- replace with FEA-extracted per-region losses",
+    "speed_rpm": 3623.3111074675157,
+    "f_e_hz": 181.16555537337578,
+    "p_cu_total_w": 1919.138440784885,
+    "p_iron_w": 288.6246742920841,
+    "p_magnet_w": 0.08914334394843965
+  },
+  "cogging": {
+    "pk_pk_Nm": null,
+    "n_points": 0
+  },
+  "back_emf": {
+    "line_line_peak_V": null,
+    "thd_pct": null
+  },
+  "torque_angle": {
+    "peak_current_A_peak": 386.080302527855,
+    "locus": [
+      {
+        "beta_deg": 0,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 5,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 10,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 15,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 20,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 25,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 30,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 35,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 40,
+        "avg_torque_Nm": null
+      },
+      {
+        "beta_deg": 45,
+        "avg_torque_Nm": null
+      }
+    ],
+    "mtpa": null
+  },
+  "ripple": {
+    "avg_Nm": null,
+    "pk_pk_Nm": null,
+    "ripple_pct": null
+  },
+  "demag": {
+    "magnet_temp_C": 150.0,
+    "demag_proportion": null,
+    "min_magnet_B_T": null,
+    "irreversible": null
+  },
+  "acceptance": [],
+  "warnings": [
+    "create material Motor_Lamination_NO skipped (none of ['CreateIsotropicMaterial', 'CreateMaterial'] on PhysicalMaterialCollection)  TARGET=define + assign this material in the FEM interactively",
+    "create material Magnet_N42SH skipped (none of ['CreateIsotropicMaterial', 'CreateMaterial'] on PhysicalMaterialCollection)  TARGET=define + assign this material in the FEM interactively",
+    "create material Coil_Copper skipped (none of ['CreateIsotropicMaterial', 'CreateMaterial'] on PhysicalMaterialCollection)  TARGET=define + assign this material in the FEM interactively",
+    "no .Simulation on the work part  TARGET=open the .sim that carries the Magnetics solution",
+    "A=0 (flux-tangent) outer boundary skipped (none of ['CreateConstraint', 'CreateBoundaryCondition'] on Part)  TARGET=A=0 on the stator OD (magnetic vector potential A = 0 on the stator OD)",
+    "anti-periodic master/slave on the radial cut faces skipped (none of ['CreateConstraint', 'CreateBoundaryCondition'] on Part)  TARGET=anti-periodic (odd) master/slave, 1 pole sector",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=0.0",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=0.0",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (cogging): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=0.0",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=0.0",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (back_emf): no solution",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=0",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=0): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=5",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=5): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=10",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=10): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=15",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=15): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=20",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=20): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=25",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=25): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=30",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=30): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=35",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=35): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=40",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=40): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=45",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (torque@beta=45): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=15",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "solve skipped (ripple): no solution",
+    "torque read skipped (no ResultManager/solution)  TARGET=read 'Electromagnetic Torque' vs step from the Magnetics post",
+    "operating point 'rotor speed [rpm]' not set on this solution  TARGET=3623",
+    "operating point 'coil peak current [A]' not set on this solution  TARGET=386.080302527855",
+    "operating point 'advance angle from q-axis [deg]' not set on this solution  TARGET=90.0",
+    "operating point 'DC bus [V]' not set on this solution  TARGET=400.0",
+    "operating point 'magnet temp [C]' not set on this solution  TARGET=150.0",
+    "solve skipped (demag): no solution"
+  ]
+}

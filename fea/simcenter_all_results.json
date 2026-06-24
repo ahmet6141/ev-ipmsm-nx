@@ -1,0 +1,28 @@
+{
+  "design": "EV_IPMSM_traction",
+  "spec_path": "C:\\Users\\ahmet\\Desktop\\web\\motor\\fea\\fea_spec.json",
+  "disciplines": {
+    "EM": {
+      "design": "EV_IPMSM_traction",
+      "discipline": "EM",
+      "acceptance": []
+    },
+    "Thermal": {
+      "design": "EV_IPMSM_traction",
+      "discipline": "Thermal",
+      "acceptance": []
+    },
+    "Structural": {
+      "design": "EV_IPMSM_traction",
+      "discipline": "Structural",
+      "acceptance": []
+    }
+  },
+  "acceptance": [],
+  "summary": {
+    "measured": 0,
+    "passed": 0,
+    "all_pass": false
+  },
+  "warnings": []
+}
