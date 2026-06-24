@@ -15,8 +15,51 @@ from typing import Any, Dict, List
 
 from .params import DrivelineParams
 
-# worst-case single-wheel torque share by differential type (for half-shaft sizing)
-_TORQUE_BIAS = {"open": 0.5, "elsd": 0.6, "torque_vectoring": 0.6, "spool": 1.0}
+# worst-case single-wheel torque share by differential type (for half-shaft sizing).
+#   open  : a passive bevel diff splits 50/50.
+#   elsd  : an e-LSD clutch can lock some bias to one wheel but cannot exceed the
+#           input axle torque; ~0.6 is a representative transient single-wheel share.
+#   torque_vectoring : a twin-clutch ACTIVE eDiff (params.py) routes torque
+#           INDEPENDENTLY left/right -- transiently it can put effectively the WHOLE
+#           axle torque through one half-shaft (a launch / single-wheel-grip event),
+#           i.e. the same worst case as a locked spool. Sizing the fatigue-critical
+#           half-shaft for 0.6 understates the duty the chosen diff can produce, so
+#           the TV bias is the full 1.0 (the adversarial-review HIGH finding).
+#   spool : locked/welded -> the full axle torque can pass through one shaft.
+_TORQUE_BIAS = {"open": 0.5, "elsd": 0.6, "torque_vectoring": 1.0, "spool": 1.0}
+
+# floor on the inboard plunge clearance (carrier face -> inboard CV bell): a real
+# tripod joint always needs a few mm of axial standoff + plunge travel, so the
+# solved gap is never driven below this.
+_MIN_INBOARD_CLEARANCE_MM = 5.0
+
+
+def _fixed_half_chain_mm(p: DrivelineParams) -> float:
+    """Per-side built length from the differential CENTRE (z = 0) to the wheel-hub
+    flange OUTER face, EXCLUDING the inboard plunge clearance -- i.e. the sum of the
+    catalogue component lengths that the ICD ties to the track:
+
+        diff_half + cv_inboard + halfshaft + cv_outboard + hub_bearing + hub_flange
+
+    The inboard clearance (solved separately) is the one slack term that makes the
+    total equal target_track/2 without rescaling any real part."""
+    d, h, w = p.differential, p.halfshaft, p.wheel_hub
+    return (d.carrier_length / 2.0
+            + h.inboard_bell_length + h.length + h.outboard_bell_length
+            + w.bearing_width + w.hub_flange_thickness)
+
+
+def inboard_clearance(p: DrivelineParams) -> float:
+    """Axial gap (mm) placed between the differential carrier face and the inboard
+    CV-joint bell so the wheel-hub flange face lands at local z = target_track/2.
+
+    Solved as  clearance = target_track/2 - fixed_half_chain, then clamped to a
+    realistic minimum plunge standoff. With the default catalogue dimensions and
+    T = 1580 this is ~19 mm (a sensible tripod plunge gap), landing both flange
+    faces exactly on the shared HUB_CENTRE. The blueprint reads THIS value (not a
+    literal), so the geometry and the engineering track stay in lock-step."""
+    return max(_MIN_INBOARD_CLEARANCE_MM,
+               p.target_track_mm / 2.0 - _fixed_half_chain_mm(p))
 
 
 @dataclass
@@ -34,8 +77,12 @@ class DerivedDriveline:
     input_pinion_pitch_diameter: float
     ring_pinion_ratio: float
     pitch_line_velocity_mps: float  # at the ring gear, at max speed
-    # geometry envelope
+    # geometry envelope / ICD track tie (ICD §3, §4)
+    inboard_clearance_mm: float     # solved carrier->inboard-CV gap (lands the face on T/2)
+    flange_face_z_mm: float         # local |z| of each wheel-hub flange OUTER face
     total_track_length_mm: float    # wheel-flange face to wheel-flange face (both sides)
+    track_target_mm: float          # the vehicle track the build is tied to (ICD)
+    track_error_pct: float          # 100*(built - target)/target; |.| must be <= 2 %
     sides_modelled: int
 
 
@@ -68,10 +115,16 @@ def derive(p: DrivelineParams) -> DerivedDriveline:
     # ring-gear pitch-line velocity at max wheel speed
     plv = math.pi * (d.ring_gear_pitch_diameter * 1e-3) * (wheel_max_rpm / 60.0)
 
-    # total modelled track length (wheel-flange outer faces, both sides)
-    half = (d.carrier_length / 2.0 + 5.0 + h.inboard_bell_length + h.length
-            + h.outboard_bell_length + w.bearing_width + w.hub_flange_thickness)
-    total = half * n_sides
+    # ICD track tie: the inboard plunge clearance is SOLVED so the wheel-hub flange
+    # OUTER face lands at local z = target_track/2 (= the shared HUB_CENTRE after the
+    # assembly Rx(-90)). half = flange-face |z|; the full built track is the symmetric
+    # span across both sides (always 2 x half, even when only one side is modelled --
+    # the vehicle has two corners regardless of how many we draw here).
+    clearance = inboard_clearance(p)
+    half = clearance + _fixed_half_chain_mm(p)             # = flange-face |z|
+    total = 2.0 * half                                     # full track both sides span
+    target = p.target_track_mm
+    err_pct = 100.0 * (total - target) / target if target > 0 else float("inf")
 
     return DerivedDriveline(
         final_drive_ratio=ratio,
@@ -85,7 +138,11 @@ def derive(p: DrivelineParams) -> DerivedDriveline:
         input_pinion_pitch_diameter=pinion_pd,
         ring_pinion_ratio=round(ring_pinion_ratio, 3),
         pitch_line_velocity_mps=round(plv, 2),
+        inboard_clearance_mm=round(clearance, 2),
+        flange_face_z_mm=round(half, 2),
         total_track_length_mm=round(total, 1),
+        track_target_mm=round(target, 1),
+        track_error_pct=round(err_pct, 3),
         sides_modelled=n_sides,
     )
 
@@ -163,6 +220,19 @@ def validate(p: DrivelineParams) -> List[str]:
     if w.bearing_bore_diameter >= w.bearing_outer_diameter:
         issues.append("bearing bore must be smaller than the bearing OD")
 
+    # ICD §4.1 dimensional-consistency tie: the built track (both wheel-hub flange
+    # faces) must match the vehicle track within +-2 %, so each flange lands on the
+    # shared HUB_CENTRE. The inboard plunge clearance is solved to hit this exactly;
+    # it only FAILS here if the catalogue chain is already longer than target_track/2
+    # (clearance clamped to its floor) -- i.e. components must shrink, not the gap grow.
+    if p.target_track_mm <= 0:
+        issues.append("target_track_mm must be > 0 (it is the vehicle track to span)")
+    elif abs(g.track_error_pct) > 2.0:
+        issues.append(
+            "built track %.0f mm is %.1f%% off target %.0f mm (> 2%%): the catalogue "
+            "half-chain already exceeds target_track/2 -- shorten halfshaft/bells or "
+            "raise target_track_mm" % (g.total_track_length_mm, g.track_error_pct, p.target_track_mm))
+
     # engineering margins (warnings, not hard stops, but reported). Half-shafts are
     # fatigue-critical, so this static screen carries a >= 1.5 target (not just > yield);
     # the governing fatigue check is separate.
@@ -206,8 +276,11 @@ def report(p: DrivelineParams) -> str:
             else "%dx PCD %.1f, Ø%.0f studs" % (w.lug_count, w.lug_pcd, w.lug_hole_diameter)),
         "  wheel-hub bearing        : Gen-%d unit, OD %.0f x W %.0f mm" % (
             w.bearing_generation, w.bearing_outer_diameter, w.bearing_width),
-        "  modelled track length    : %.0f mm (%d side%s)" % (
-            g.total_track_length_mm, g.sides_modelled, "s" if g.sides_modelled > 1 else ""),
+        "  modelled side(s)         : %d (chain drawn per side)" % g.sides_modelled,
+        "  inboard plunge clearance : %.1f mm (solved to tie the track to the vehicle)" % g.inboard_clearance_mm,
+        "  wheel-hub flange face     : local z = +-%.1f mm (each lands on HUB_CENTRE)" % g.flange_face_z_mm,
+        "  built track length       : %.0f mm  vs target %.0f mm  (%+.2f%%, ICD +-2%%)" % (
+            g.total_track_length_mm, g.track_target_mm, g.track_error_pct),
         "  validation: %s" % ("OK (geometry is buildable)" if not issues else "%d issue(s)" % len(issues)),
     ]
     for it in issues:

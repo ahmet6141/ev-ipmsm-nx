@@ -69,9 +69,13 @@ class HalfshaftParams:
     """The two drive (half) shafts, each with an inboard tripod (plunging) joint
     and an outboard Rzeppa (fixed) joint. Hollow shafts are lighter + raise the
     first torsional mode (NVH); set bore_diameter = 0 for a solid shaft."""
-    diameter: float = 36.0              # sized so worst-case wheel torque keeps static SF >= 1.5
-                                        # (half-shafts are fatigue-critical; a >1.5 static
-                                        #  margin backstops the separate fatigue check)
+    diameter: float = 44.0              # sized so the WORST-CASE wheel torque keeps static
+                                        # SF >= 1.5. The default diff is a torque-vectoring
+                                        # eDiff (bias 1.0 -> the full 3960 Nm axle torque can
+                                        # pass through one shaft); at 44 mm OD / 18 mm bore the
+                                        # static shear SF is ~1.7. Half-shafts are
+                                        # fatigue-critical, so this >1.5 static margin backstops
+                                        # the separate fatigue check.
     bore_diameter: float = 18.0         # hollow-shaft bore (0 => solid)
     length: float = 520.0               # bar length between the two CV-joint bells
     spline_diameter: float = 28.0       # stub spline into the wheel hub
@@ -138,6 +142,14 @@ class DrivelineParams:
     sides: str = "both"                 # both | left | right (which wheel ends to model)
     motor_peak_torque_nm: float = 440.0 # from motor_nx em_design (peak); drives sizing
     motor_max_speed_rpm: float = 18000.0
+    # Vehicle TRACK the built driveline must span (ICD §3/§4). The two wheel-hub
+    # flange faces are placed at local z = +-target_track_mm/2 so that, after the
+    # assembly transform Rx(-90) about the differential centre, each flange lands on
+    # the shared HUB_CENTRE at vehicle y = +-T/2. The inboard plunge clearance is
+    # solved (engineering.inboard_clearance) to absorb the residual length so the
+    # face hits T/2 exactly while every real component keeps its catalogue size;
+    # validate() asserts the achieved track is within +-2 % of this target.
+    target_track_mm: float = 1580.0     # = vehicle_nx LayoutParams.track_* (single SoT)
     differential: DifferentialParams = field(default_factory=DifferentialParams)
     halfshaft: HalfshaftParams = field(default_factory=HalfshaftParams)
     wheel_hub: WheelHubParams = field(default_factory=WheelHubParams)
@@ -194,6 +206,7 @@ class DrivelineParams:
         generated body stays editable. Names are NX-expression safe (group_field)."""
         out: List[Tuple[str, float, str]] = [
             ("final_drive_ratio", self.differential.final_drive_ratio, ""),
+            ("target_track_mm", float(self.target_track_mm), "mm"),
         ]
         for group_name in ("differential", "halfshaft", "wheel_hub"):
             group = getattr(self, group_name)

@@ -59,7 +59,9 @@ def _suspension_component_of(step_id):
         return "Damper"
     if base.startswith("antiroll"):
         return "Anti_Roll"
-    if base.endswith(("bushing_l", "bushing_r")) or "balljoint" in base:
+    # bushings + ball joints (the inboard pickups / outboard joints), incl. the
+    # redesign's per-leg fore/aft variants (lower_bushing_fore_r, upper_balljoint_l).
+    if "bushing" in base or "balljoint" in base:
         return "Mounts"
     return None
 

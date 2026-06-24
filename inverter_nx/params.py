@@ -67,10 +67,20 @@ class PowerStageParams:
 @dataclass
 class DcLinkParams:
     """The DC-link capacitor bank that buffers the switching ripple between bus + bridge.
-    Film caps dominate traction inverters (self-healing, high ripple rating)."""
+    Film caps dominate traction inverters (self-healing, high ripple rating).
+
+    A DISCHARGE provision drains the stored energy after HV disconnect: a passive bleed
+    resistor across the link (and/or an active-discharge path through the bridge). The
+    bus must reach < 60 V within the regulatory time (~5 s); engineering.validate()
+    checks the passive RC time constant against that limit and reports the required
+    bleed resistance."""
     capacitance_uf: float = 500.0
     cap_technology: str = "film"        # film | ceramic | electrolytic
     ripple_current_margin: float = 1.2  # cap ripple-current rating / estimated ripple
+    bleed_resistor_kohm: float = 4.7    # passive bleed across the link (0 => none fitted);
+                                        # sized so the 500 uF link reaches < 60 V in < 5 s
+                                        # (~4.5 s at 400 V) independent of active discharge
+    active_discharge: bool = True       # active discharge path (bridge) in addition
 
 
 @dataclass
@@ -103,24 +113,53 @@ class ControlParams:
 @dataclass
 class CoolingParams:
     """Liquid cold plate the power modules + DC link sit on (single coolant loop with
-    the motor). Sized so the peak switching loss stays within the heat-flux budget."""
+    the motor). Sized so the peak switching loss stays within the heat-flux budget.
+
+    The inlet / outlet ports are bored radially through the -X end wall into the cold
+    plate (G/SAE coolant fittings); `port_diameter_mm` is the bore (fitting thread
+    minor), `port_pitch_mm` the inlet-to-outlet centre spacing along +Y."""
     type: str = "liquid_cold_plate"     # liquid_cold_plate | pin_fin | air
     coldplate_length_mm: float = 220.0
     coldplate_width_mm: float = 180.0
     coldplate_thickness_mm: float = 12.0
     coolant: str = "WEG 50/50"          # 50/50 water/ethylene-glycol
+    port_diameter_mm: float = 8.0       # coolant inlet/outlet bore (0 => no ports; G1/8 ~ 8 mm)
+    port_pitch_mm: float = 60.0         # inlet-to-outlet centre spacing (along +Y)
 
 
 @dataclass
 class EnclosureParams:
     """The HV enclosure (housing) -- a sealed box that carries the cold plate + bridge +
-    DC link, with HV interlock and the 3-phase + DC connectors."""
+    DC link, with HV interlock and the 3-phase + DC connectors. The base (z=0) face is
+    the MOUNTING-FACE DATUM the vehicle assembly sits on the motor (see blueprint).
+
+    A peripheral LID FLANGE (a raised lip at the top of the wall) carries the lid bolt
+    pattern: `lid_bolt_count` bolts on a rectangular pattern inset `lid_bolt_inset_mm`
+    from the outer wall, drilled `lid_bolt_diameter_mm`."""
     length_mm: float = 260.0
     width_mm: float = 200.0
     height_mm: float = 90.0
     wall_mm: float = 6.0
     connector_count: int = 3            # 3-phase motor connectors
     hv_connector: bool = True           # HV DC inlet connector + interlock
+    lv_connector: bool = True           # LV signal / control connector (CAN, gate, sensor)
+    # lid bolt pattern on the top sealing flange
+    lid_flange_mm: float = 8.0          # radial width of the raised top sealing lip (0 => none)
+    lid_flange_thickness_mm: float = 6.0  # axial height of the raised lip above the wall top
+    lid_bolt_count: int = 8             # lid bolts (even, distributed around the perimeter)
+    lid_bolt_diameter_mm: float = 5.0   # lid bolt tapped-hole diameter (M5 ~ 4.2 minor)
+    lid_bolt_inset_mm: float = 4.0      # bolt-circle inset from the outer wall edge
+
+
+@dataclass
+class BusbarParams:
+    """Representative DC-bus + AC-phase busbars (laminated copper) tying the SiC modules
+    to the DC-link cap and out to the phase connectors. A first-order packaging BLANK
+    (the cap-to-module link), not a routed conductor model."""
+    enabled: bool = True
+    thickness_mm: float = 3.0           # copper bar thickness (stacked +/-)
+    width_mm: float = 24.0              # bar width (current-carrying cross-section)
+    height_mm: float = 8.0              # standoff height above the module tops
 
 
 # --------------------------------------------------------------------------- #
@@ -137,6 +176,7 @@ class InverterParams:
     control: ControlParams = field(default_factory=ControlParams)
     cooling: CoolingParams = field(default_factory=CoolingParams)
     enclosure: EnclosureParams = field(default_factory=EnclosureParams)
+    busbar: BusbarParams = field(default_factory=BusbarParams)
 
     # -- serialisation (identical contract to motor_nx.params) ------------- #
     def to_dict(self) -> Dict[str, Any]:
@@ -190,7 +230,7 @@ class InverterParams:
         carry mm dimensions; electrical params live in the blueprint metadata, not NX
         expressions. Names are NX-expression safe (group_field)."""
         out: List[Tuple[str, float, str]] = []
-        for group_name in ("cooling", "enclosure"):
+        for group_name in ("cooling", "enclosure", "busbar"):
             group = getattr(self, group_name)
             for f in fields(group):
                 val = getattr(group, f.name)
@@ -213,6 +253,7 @@ _GROUP_TYPES = {
     "control": ControlParams,
     "cooling": CoolingParams,
     "enclosure": EnclosureParams,
+    "busbar": BusbarParams,
 }
 
 

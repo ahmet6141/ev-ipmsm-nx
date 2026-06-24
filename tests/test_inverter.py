@@ -148,3 +148,199 @@ def test_dc_link_and_cold_plate_present():
     roles = {s["role"] for s in blue["build_steps"]}
     assert "dc_link" in roles and "cold_plate" in roles
     assert "enclosure_cavity_cut" in roles
+
+
+# --------------------------------------------------------------------------- #
+# mounting-face datum (the interface the vehicle assembly sits on the motor)
+# --------------------------------------------------------------------------- #
+def test_mounting_face_datum_is_base_centre():
+    """The mounting-face datum is the enclosure base centre at the local origin --
+    every body grows in +Z from this face (ICD section 3)."""
+    p = InverterParams()
+    lay = eng.layout(p)
+    assert lay.mounting_face_xyz == (0.0, 0.0, 0.0)
+    blue = bp.generate(p)
+    assert blue["mounting_face_xyz"] == [0.0, 0.0, 0.0]
+
+
+def test_all_geometry_sits_at_or_above_the_mounting_face():
+    """No body dips below z=0 (the mounting face); the inverter sits ENTIRELY on the
+    +Z side of the datum so the assembly translation never buries it in the motor."""
+    blue = bp.generate(InverterParams())
+    for s in blue["build_steps"]:
+        if s["boolean"] != "create":
+            continue  # cuts (cavity, ports, bolts) may start a hair outside for a clean cut
+        z0 = s.get("z0", 0.0)
+        assert z0 >= -1e-9, "%s starts below the mounting face (z0=%.2f)" % (s["id"], z0)
+
+
+def test_enclosure_encloses_the_internals_world_bbox():
+    """The internals (cold plate, modules, DC-link cap, busbars) all lie inside the
+    enclosure inner cavity footprint and below the lid (world bounding box check)."""
+    p = InverterParams()
+    blue = bp.generate(p)
+    e = p.enclosure
+    inner_hx = (e.length_mm - 2.0 * e.wall_mm) / 2.0
+    inner_hy = (e.width_mm - 2.0 * e.wall_mm) / 2.0
+    lid_z = e.height_mm - e.wall_mm
+    internal_roles = {"cold_plate", "power_module", "dc_link", "busbar"}
+    for s in blue["build_steps"]:
+        if s["role"] not in internal_roles or s["boolean"] != "create":
+            continue
+        xs = [pt[0] for pt in s["profile"]]
+        ys = [pt[1] for pt in s["profile"]]
+        assert max(xs) <= inner_hx + 1e-6 and min(xs) >= -inner_hx - 1e-6, s["id"]
+        assert max(ys) <= inner_hy + 1e-6 and min(ys) >= -inner_hy - 1e-6, s["id"]
+        top_z = s.get("z0", 0.0) + s.get("length", 0.0)
+        assert top_z <= lid_z + 1e-6, "%s top %.1f exceeds lid plane %.1f" % (s["id"], top_z, lid_z)
+
+
+# --------------------------------------------------------------------------- #
+# coolant ports on the cold plate
+# --------------------------------------------------------------------------- #
+def test_two_coolant_ports_present_and_axis_placed():
+    blue = bp.generate(InverterParams())
+    ports = [s for s in blue["build_steps"] if s["role"] == "coolant_port_cut"]
+    assert len(ports) == 2
+    for s in ports:
+        assert s["kind"] == "hole" and s["boolean"] == "subtract"
+        assert s["target"] == "cold_plate"
+        # bored along +X into the -X end face of the plate
+        assert tuple(s["axis"]) == (1.0, 0.0, 0.0)
+
+
+def test_coolant_ports_clear_the_plate_and_split_in_y():
+    """Inlet/outlet straddle the plate centre by +/- pitch/2 in Y, at the plate mid-
+    thickness, and lie within the cold-plate width."""
+    p = InverterParams()
+    blue = bp.generate(p)
+    c = p.cooling
+    lay = eng.layout(p)
+    z_mid = lay.floor_z + c.coldplate_thickness_mm / 2.0
+    ports = sorted((s for s in blue["build_steps"] if s["role"] == "coolant_port_cut"),
+                   key=lambda s: s["cy"])
+    assert ports[0]["cy"] == pytest.approx(-c.port_pitch_mm / 2.0)
+    assert ports[1]["cy"] == pytest.approx(+c.port_pitch_mm / 2.0)
+    for s in ports:
+        assert s["z0"] == pytest.approx(z_mid)
+        assert abs(s["cy"]) + c.port_diameter_mm / 2.0 <= c.coldplate_width_mm / 2.0
+
+
+def test_port_dia_exceeding_plate_thickness_is_caught():
+    p = InverterParams().overridden(**{"cooling.port_diameter_mm": 20.0,
+                                       "cooling.coldplate_thickness_mm": 12.0})
+    assert any("coolant port" in i for i in eng.validate(p))
+
+
+# --------------------------------------------------------------------------- #
+# lid bolt pattern on the sealing flange
+# --------------------------------------------------------------------------- #
+def test_lid_bolt_pattern_count_and_axis():
+    p = InverterParams()
+    blue = bp.generate(p)
+    bolts = [s for s in blue["build_steps"] if s["role"] == "lid_bolt_cut"]
+    assert len(bolts) == p.enclosure.lid_bolt_count
+    for s in bolts:
+        assert s["kind"] == "hole" and s["boolean"] == "subtract"
+        assert s["target"] == "enclosure"
+        assert tuple(s["axis"]) == (0.0, 0.0, -1.0)   # drilled DOWN through the flange
+
+
+def test_lid_bolts_lie_on_the_flange_centre_line():
+    """Every lid bolt sits on the rectangular bolt line inset from the outer wall, i.e.
+    on the raised sealing flange (not in the cavity, not off the part)."""
+    p = InverterParams()
+    e = p.enclosure
+    blue = bp.generate(p)
+    bx = e.length_mm / 2.0 - e.lid_bolt_inset_mm
+    by = e.width_mm / 2.0 - e.lid_bolt_inset_mm
+    for s in (s for s in blue["build_steps"] if s["role"] == "lid_bolt_cut"):
+        on_x_edge = abs(abs(s["cx"]) - bx) < 1e-6
+        on_y_edge = abs(abs(s["cy"]) - by) < 1e-6
+        assert on_x_edge or on_y_edge, "bolt (%.1f,%.1f) off the flange line" % (s["cx"], s["cy"])
+        assert abs(s["cx"]) <= bx + 1e-6 and abs(s["cy"]) <= by + 1e-6
+
+
+def test_lid_bolts_inside_outer_footprint():
+    p = InverterParams()
+    e = p.enclosure
+    for s in (s for s in bp.generate(p)["build_steps"] if s["role"] == "lid_bolt_cut"):
+        assert abs(s["cx"]) <= e.length_mm / 2.0
+        assert abs(s["cy"]) <= e.width_mm / 2.0
+
+
+def test_lid_bolts_not_fitting_flange_is_caught():
+    p = InverterParams().overridden(**{"enclosure.lid_flange_mm": 4.0,
+                                       "enclosure.lid_bolt_inset_mm": 4.0,
+                                       "enclosure.lid_bolt_diameter_mm": 6.0})
+    assert any("lid bolts" in i for i in eng.validate(p))
+
+
+# --------------------------------------------------------------------------- #
+# busbars + LV connector
+# --------------------------------------------------------------------------- #
+def test_busbar_pair_present_above_modules():
+    p = InverterParams()
+    blue = bp.generate(p)
+    lay = eng.layout(p)
+    bars = [s for s in blue["build_steps"] if s["role"] == "busbar"]
+    assert len(bars) == 2
+    module_top = lay.plate_top_z + lay.module_hgt
+    for s in bars:
+        assert s["z0"] >= module_top - 1e-6   # standoff above the module tops
+
+
+def test_lv_connector_present_and_separated_from_hv():
+    blue = bp.generate(InverterParams())
+    conns = {s["id"]: s for s in blue["build_steps"] if s["role"] == "connector"}
+    assert "lv_connector" in conns and "hv_connector" in conns
+    # HV/LV separation: opposite sides of the -X end wall in Y
+    assert conns["lv_connector"]["cy"] * conns["hv_connector"]["cy"] < 0.0
+
+
+# --------------------------------------------------------------------------- #
+# engineering extras (continuous current/flux, cap energy, packaging, mass)
+# --------------------------------------------------------------------------- #
+def test_continuous_dc_current_from_power_and_voltage():
+    p = InverterParams()
+    g = eng.derive(p)
+    assert g.cont_dc_current_a == pytest.approx(
+        p.motor.cont_power_kw * 1000.0 / p.bus.dc_voltage_v, rel=1e-3)
+    assert g.peak_dc_current_a > g.cont_dc_current_a
+
+
+def test_continuous_flux_below_peak_flux():
+    g = eng.derive(InverterParams())
+    assert 0.0 < g.cont_heat_flux_w_cm2 < g.coldplate_heat_flux_w_cm2
+
+
+def test_dc_link_energy_half_c_v_squared():
+    p = InverterParams()
+    g = eng.derive(p)
+    expected = 0.5 * (p.dc_link.capacitance_uf * 1e-6) * p.bus.dc_voltage_v ** 2
+    assert g.dc_link_energy_j == pytest.approx(expected, rel=1e-3)
+
+
+def test_packaging_volume_and_mass_positive():
+    p = InverterParams()
+    g = eng.derive(p)
+    expected_vol_l = (p.enclosure.length_mm * p.enclosure.width_mm
+                      * p.enclosure.height_mm) * 1e-6
+    assert g.packaging_volume_l == pytest.approx(expected_vol_l, rel=1e-3)
+    assert g.estimated_mass_kg > 0.0
+    assert g.power_density_kw_per_l > 0.0
+
+
+def test_validate_catches_module_row_overhang():
+    """A tiny cold plate cannot host the fixed-size module row -> caught."""
+    p = InverterParams().overridden(**{"cooling.coldplate_length_mm": 60.0,
+                                       "cooling.coldplate_width_mm": 60.0,
+                                       "enclosure.length_mm": 90.0,
+                                       "enclosure.width_mm": 90.0})
+    assert any("overhang" in i for i in eng.validate(p))
+
+
+def test_validate_catches_internals_too_tall():
+    """A shallow enclosure cannot close its lid over the cold plate + cap stack."""
+    p = InverterParams().overridden(**{"enclosure.height_mm": 40.0})
+    assert any("internals top" in i for i in eng.validate(p))

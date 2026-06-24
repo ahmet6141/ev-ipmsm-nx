@@ -8,7 +8,7 @@ so this journal just supplies the inverter blueprint and inverter body-naming / 
 grouping. With NO blueprint argument the default EV traction inverter is built.
 
 Export DEFAULTS to "step" (AP242, reliable); "parts" also writes each component
-(Enclosure, Cold_Plate, Power_Stage, DC_Link, Connectors) as its own STEP for
+(Enclosure, Cold_Plate, Power_Stage, DC_Link, Busbar, Connectors) as its own STEP for
 piece-by-piece production hand-off. See motor_nx/nx_builder.py for the per-call NXOpen
 rationale; this file adds no new NXOpen calls.
 """
@@ -32,6 +32,7 @@ _INVERTER_ROLE_NAME = {
     "Cold_Plate": "COLD_PLATE",
     "Power_Stage": "POWER_STAGE",
     "DC_Link": "DC_LINK",
+    "Busbar": "BUSBAR",
     "Connectors": "CONNECTORS",
 }
 
@@ -40,15 +41,21 @@ def _inverter_component_of(step_id):
     """Group a build-step id into a manufacturable component (per-part STEP export
     + body naming). Mirrors motor_nx.nx_builder._component_of's contract."""
     base = step_id.split("#")[0]
-    if base.startswith("enclosure"):
+    # Enclosure: the box, its cavity, the lid sealing flange and the lid bolt holes are
+    # all part of the housing component (the bolt cuts subtract from the enclosure body).
+    if base.startswith("enclosure") or base.startswith("lid_bolt"):
         return "Enclosure"
-    if base.startswith("cold_plate"):
+    # Cold plate carries the coolant inlet/outlet port bores.
+    if base.startswith("cold_plate") or base.startswith("coolant_"):
         return "Cold_Plate"
     if base.startswith("power_module"):
         return "Power_Stage"
     if base.startswith("dc_link"):
         return "DC_Link"
-    if base.startswith("phase_connector") or base.startswith("hv_connector"):
+    if base.startswith("busbar"):
+        return "Busbar"
+    if (base.startswith("phase_connector") or base.startswith("hv_connector")
+            or base.startswith("lv_connector")):
         return "Connectors"
     return None
 

@@ -51,19 +51,46 @@ class FrameParams:
     # lateral spacing between the inner faces of the two longitudinal rails
     frame_inner_width_mm: float = 1100.0
 
+    # AXLE NOTCH / kick-up: at each axle x-station the suspension links and the
+    # driveline half-shaft sweep through the rail's Y/Z band at the hub-centre height.
+    # The rail is locally RELIEVED there (a clearance window through its lower/mid
+    # section) so the corner + half-shaft envelope clears it -- the rail "arches" over
+    # the axle, leaving a continuous bridge above the notch. (Resolves the assembled-
+    # vehicle rail/arm + rail/half-shaft collisions the adversarial review found.)
+    axle_notch: bool = True
+    axle_notch_x_width_mm: float = 200.0   # X length of the relief window (centred on the axle)
+    axle_notch_top_mm: float = 365.0       # world Z up to which the rail is relieved
+
 
 @dataclass
 class BatteryTrayParams:
     """The sealed structural battery tray that drops between the rails (the floor
     of the skateboard). Modelled as a hollow box with a few lateral crossbraces.
-    `sealed` flags an IP-rated enclosure (a lid is fitted; not modelled here)."""
+    `sealed` flags an IP-rated enclosure (a lid is fitted; not modelled here).
+
+    The pack energy is audited against the tray's INTERNAL cavity volume: the gross
+    cavity must hold `energy_kwh` at `pack_density_wh_per_l` once the `usable_fraction`
+    (walls, cold plate, module housings, gaps) is removed. With the default 130 mm
+    internal height the 75 kWh pack sits at a realistic ~245 Wh/L gross
+    (~327 Wh/L on the usable cavity)."""
     enabled: bool = True
     length_mm: float = 2400.0
-    width_mm: float = 1450.0
-    height_mm: float = 110.0
+    # the tray drops INTO the inner channel between the rails, so its width must be
+    # < frame_inner_width (1100) with a side clearance for the seal / mounting flange.
+    width_mm: float = 1040.0
+    # internal height raised to 130 mm so prismatic cells + a cooling plate + the
+    # module enclosure fit (110 mm was the binding constraint that forced an
+    # optimistic ~273 Wh/L gross for 75 kWh -- the adversarial-review MEDIUM finding).
+    height_mm: float = 130.0
     wall_mm: float = 4.0
     crossbrace_count: int = 6
+    # side clearance between the tray wall and each rail inner face (seal/flange gap)
+    side_clearance_mm: float = 20.0
     sealed: bool = True
+    # pack-energy audit (does not change geometry; checked in engineering.validate())
+    energy_kwh: float = 75.0              # target usable pack energy
+    pack_density_wh_per_l: float = 250.0  # assumed pack-level volumetric density (gross)
+    usable_fraction: float = 0.75         # cavity fraction that is active cell volume
 
 
 @dataclass
@@ -90,6 +117,23 @@ class BodyMountParams:
 
 
 @dataclass
+class LoadsParams:
+    """Static load-case + mass-distribution assumptions for the first-order bench
+    checks (bending stress / deflection, vehicle CG). These DRIVE the engineering
+    derive() so the load tracks the model instead of a hardcoded literal (the
+    adversarial-review MEDIUM finding)."""
+    # sprung mass reacted by the rails over the wheelbase. <=0 => derive it from the
+    # battery-pack mass (energy/density) + the body/occupant allowance below.
+    static_payload_kg: float = 0.0
+    # mass + height of the body-in-white + occupants share, sitting well above the
+    # low battery floor -- used for the mass-weighted vehicle CG (not the battery CG).
+    body_occupant_mass_kg: float = 700.0
+    body_occupant_cg_height_mm: float = 650.0
+    # gravimetric pack density used to estimate the battery mass from energy_kwh.
+    pack_gravimetric_wh_per_kg: float = 160.0
+
+
+@dataclass
 class MaterialParams:
     """Production material spec (metadata; does not change geometry)."""
     rail_material: str = "6082-T6 extruded aluminium"
@@ -107,6 +151,7 @@ class ChassisParams:
     battery_tray: BatteryTrayParams = field(default_factory=BatteryTrayParams)
     subframe: SubframeParams = field(default_factory=SubframeParams)
     body_mount: BodyMountParams = field(default_factory=BodyMountParams)
+    loads: LoadsParams = field(default_factory=LoadsParams)
     material: MaterialParams = field(default_factory=MaterialParams)
 
     # -- serialisation (identical contract to driveline_nx.params) --------- #
@@ -159,6 +204,9 @@ class ChassisParams:
         """Flat (name, value, unit) list pushed into NX as named expressions so the
         generated body stays editable. Names are NX-expression safe (group_field).
         Only the geometric groups carry dimensions; material metadata is skipped."""
+        # battery-tray pack-energy fields are an engineering audit, NOT geometry, so
+        # they must not be emitted as mm NX expressions.
+        _NON_GEOMETRIC = {"energy_kwh", "pack_density_wh_per_l", "usable_fraction"}
         out: List[Tuple[str, float, str]] = []
         for group_name in ("frame", "battery_tray", "subframe", "body_mount"):
             group = getattr(self, group_name)
@@ -166,6 +214,8 @@ class ChassisParams:
                 val = getattr(group, f.name)
                 if isinstance(val, bool) or isinstance(val, str):
                     continue  # expressions carry numeric dimensions only
+                if f.name in _NON_GEOMETRIC:
+                    continue  # not a geometric dimension
                 if f.name.endswith("_deg"):
                     unit = "deg"
                 elif f.name.endswith("_ratio"):
@@ -183,6 +233,7 @@ _GROUP_TYPES = {
     "battery_tray": BatteryTrayParams,
     "subframe": SubframeParams,
     "body_mount": BodyMountParams,
+    "loads": LoadsParams,
     "material": MaterialParams,
 }
 

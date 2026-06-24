@@ -3,35 +3,58 @@ list the NX builder consumes (motor_nx.blueprint schema). NX-independent +
 unit-tested.
 
 It reuses motor_nx.blueprint.BuildStep and its primitive vocabulary
-(tube / cylinder / extrude + boolean create/subtract/unite), so motor_nx's
+(prism / cylinder / tube / extrude + boolean create/subtract/unite), so motor_nx's
 hardened NXOpen engine builds a suspension corner with no new geometry code.
 
-Coordinate convention (LOCAL corner frame)
-    X = vehicle longitudinal, Y = lateral (outboard = +Y toward the wheel),
-    Z = vertical (up). The knuckle / upright sits outboard (high +Y); the
-    control-arm chassis pickups sit inboard (near Y = 0).
+Coordinate convention (LOCAL corner frame -- ICD-09 section 3)
+    The LOCAL ORIGIN is the WHEEL-HUB CENTRE: the knuckle/upright hub bore is
+    centred on local (0, 0, 0).
+        +X = vehicle longitudinal (forward),
+        +Y = OUTBOARD (toward the wheel; away from the chassis centreline),
+        +Z = vertical (up).
+    The wheel SPIN AXIS is the local Y axis (lateral); the hub bore is therefore a
+    cylinder coaxial with +/-Y through the origin. Inboard control-arm chassis
+    pickups sit at local -Y (toward the chassis centreline) at y ~ -arm_length.
 
-BUILDER PRIMITIVE LIMITATION (and the simplification it forces)
-    The reused builder only EXTRUDES along +Z and revolves about Z; cylinders and
-    tubes are coaxial with +Z (optionally offset in XY via cx/cy). So nothing can
-    be modelled as a beam lying along the Y axis directly. Following driveline's
-    "production-representative BLANK" philosophy (gear blanks at pitch diameter),
-    the control arms are represented as THIN EXTRUDED BOXES lying in horizontal
-    (XY) planes at their respective Z heights -- a buildable, sensible blank that
-    reads as an arm spanning inboard pickup -> outboard knuckle. The coil spring is
-    a +Z tube blank, the damper / anti-roll bar / bushings / ball joints are +Z
-    cylinders. Physical exactness (true 3D link axes, joint articulation) is traded
-    for a BUILDABLE representation, exactly as driveline does for its gear teeth.
+    This re-datuming is REQUIRED so the assembly placing this part's origin at
+    HUB_CENTRE(axle, side) = (axle_x, +/-T/2, r) puts the hub on the wheel with NO
+    double-count of track/2 (vehicle_nx.assembly: left corner = identity, right
+    corner = Rz(180), each at origin HUB_CENTRE). Build ONE canonical corner in
+    this frame; the assembly mirrors it per side.
+
+TRUE-3D MODELLING (no more flat +Z plates)
+    Every link is modelled along its TRUE 3D axis with the general beam primitive
+    kind="prism" (a 2D (u, v) section extruded along an arbitrary world axis at an
+    arbitrary world origin) or an axis-placed cylinder/tube:
+      * lower A-arm  : two legs (fore + aft) from inboard chassis pickups (-Y, low
+                       Z) up/out to the lower ball joint just inboard of the hub;
+      * upper A-arm  : (multilink / double_wishbone) two legs from inboard pickups
+                       (-Y, high Z) to the upper ball joint above the hub;
+      * toe / tie link: a single bar set rearward (-X) from an inboard pickup to a
+                       steering-arm point on the knuckle;
+      * coil spring  : an axis-placed tube at its REAL inclination, seated on the
+                       lower arm and reaching up to a body mount;
+      * damper       : an axis-placed cylinder coaxial with the spring (MacPherson:
+                       a coaxial strut through the upright top, the upper link);
+      * ball joints / bushings / caliper mount / anti-roll drop link: placed in 3D
+                       at their true hardpoints.
+
+    All hardpoint coordinates come from engineering.hardpoints(p), which is the one
+    source of truth shared with the world-bounding-box / connectivity tests and the
+    validate() reach checks.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence, Tuple
 
 from motor_nx.blueprint import BuildStep   # reuse the proven, version-independent step
 from . import engineering
 from .params import SuspensionParams
+
+Vec3 = Tuple[float, float, float]
 
 # component colours (RGB 0-255)
 COL_KNUCKLE = (95, 100, 110)
@@ -43,171 +66,263 @@ COL_MOUNT = (60, 62, 70)
 COL_AIR = (0, 0, 0)
 
 
-def _arm_box(arm_id: str, role: str, body_name: str, y_in: float, y_out: float,
-             z_plane: float, width: float, thickness: float, sign: int) -> BuildStep:
-    """A control arm as a thin extruded box lying in a horizontal (XY) plane.
+# --------------------------------------------------------------------------- #
+# small 3D helpers (pure math; the NX-free twins live in motor_nx.blueprint)
+# --------------------------------------------------------------------------- #
+def _sub(a: Vec3, b: Vec3) -> Vec3:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
-    The box spans inboard (y_in) -> outboard (y_out) in Y and is centred on X, with
-    a small longitudinal width. `sign` mirrors the corner about the X-Z plane
-    (negate Y) for the second corner of an axle. Extruded from z_plane along +Z by
-    `thickness` (the only axis the builder extrudes along)."""
-    ya, yb = sign * y_in, sign * y_out
-    ylo, yhi = (ya, yb) if ya <= yb else (yb, ya)
-    hw = width / 2.0
-    profile = [(-hw, ylo), (hw, ylo), (hw, yhi), (-hw, yhi)]
+
+def _norm(v: Vec3) -> float:
+    return math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+
+
+def _mirror_corner(pt: Vec3, track_mm: float) -> Vec3:
+    """Reflect a hardpoint of the reference (+Y outboard) corner onto the OPPOSITE
+    corner of the same axle for the in-package `corners="axle"` preview. The other
+    hub sits at local (0, -track, 0) and its outboard direction is -Y, so we reflect
+    Y about the mid-plane y = -track/2:  y' = -track - y  (X, Z unchanged)."""
+    return (pt[0], -track_mm - pt[1], pt[2])
+
+
+def _rect_uv(width: float, height: float) -> List[Tuple[float, float]]:
+    """Closed (u, v) rectangle width x height centred on the local section origin."""
+    hw, hh = width / 2.0, height / 2.0
+    return [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+
+
+def _prism_link(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
+                width: float, height: float, color, material: str = "arm_steel",
+                u_dir: Vec3 = (1.0, 0.0, 0.0)) -> BuildStep:
+    """A structural link as a rectangular-section PRISM along its TRUE 3D axis from
+    p0 -> p1. The section (width x height in local u,v) is extruded along the unit
+    axis (p1 - p0) by the link length, with the section plane placed at p0. `u_dir`
+    sets the local +u in world (default +X = longitudinal); +v = axis x u. This is
+    the general beam: a horizontal arm leg, an inclined toe link, anything."""
+    axis = _sub(p1, p0)
+    length = _norm(axis)
     return BuildStep(
-        id=arm_id, role=role, kind="extrude", boolean="create",
-        body_name=body_name, material="arm_steel", color=COL_ARM,
-        profile=profile, z0=z_plane, length=thickness)
+        id=step_id, role=role, kind="prism", boolean="create",
+        body_name=body_name, material=material, color=color,
+        profile=_rect_uv(width, height), origin3=p0, axis=axis, u_dir=u_dir,
+        length=length)
 
 
-def _mount(mount_id: str, role: str, body_name: str, cx: float, cy: float,
-           z0: float, diameter: float, length: float, sign: int) -> BuildStep:
-    """A small +Z cylinder representing a bushing or ball-joint mount point."""
+def _axis_cyl(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
+              diameter: float, color, material: str = "joint_steel",
+              boolean: str = "create", target: str = None) -> BuildStep:
+    """A solid cylinder coaxial with the TRUE 3D axis p0 -> p1 (e.g. a damper rod,
+    a ball-joint stud, an anti-roll drop link). Built from the base point p0 along
+    the unit axis by the segment length."""
+    axis = _sub(p1, p0)
+    length = _norm(axis)
     return BuildStep(
-        id=mount_id, role=role, kind="cylinder", boolean="create",
-        body_name=body_name, material="joint_steel", color=COL_MOUNT,
-        outer_radius=diameter / 2.0, cx=cx, cy=sign * cy, z0=z0, length=length)
+        id=step_id, role=role, kind="cylinder", boolean=boolean,
+        body_name=body_name, material=material, color=color,
+        outer_radius=diameter / 2.0, origin3=p0, axis=axis, length=length,
+        target=target)
+
+
+def _axis_tube(step_id: str, role: str, body_name: str, p0: Vec3, p1: Vec3,
+               outer_d: float, inner_d: float, color, material: str) -> BuildStep:
+    """A hollow tube coaxial with the TRUE 3D axis p0 -> p1 (the coil spring blank:
+    a representative annular envelope at the coil mean diameter, inclined to its
+    real working axis)."""
+    axis = _sub(p1, p0)
+    length = _norm(axis)
+    return BuildStep(
+        id=step_id, role=role, kind="tube", boolean="create",
+        body_name=body_name, material=material, color=color,
+        outer_radius=outer_d / 2.0, inner_radius=max(2.0, inner_d / 2.0),
+        origin3=p0, axis=axis, length=length)
 
 
 # --------------------------------------------------------------------------- #
-# one corner
+# one corner -- built from the engineering hardpoints (true 3D)
 # --------------------------------------------------------------------------- #
-def corner_steps(p: SuspensionParams, tag: str, sign: int) -> List[BuildStep]:
-    """Build one corner. `sign` = +1 (reference corner) or -1 (mirrored about X-Z)."""
+def corner_steps(p: SuspensionParams, tag: str, mirror: bool) -> List[BuildStep]:
+    """Build one corner from the shared hardpoint table.
+
+    `mirror=False` builds the canonical reference corner (hub at local origin, +Y
+    outboard). `mirror=True` builds the OPPOSITE corner of the same axle for the
+    in-package `corners="axle"` preview (reflected onto the other hub at -track in
+    Y). The vehicle assembler does NOT use mirror -- it places this canonical part
+    via its own per-side transform (identity / Rz(180))."""
     g, s, d = p.geometry, p.spring, p.damper
     a, k, arm = p.antiroll, p.knuckle, p.arm
-    steps: List[BuildStep] = []
     U = tag.upper()
+    hp = engineering.hardpoints(p)
+    track = g.track_width_mm
 
-    # outboard knuckle / upright: an extruded box centred near the wheel (high +Y),
-    # standing up the local Z by `height_mm` about the wheel-centre (ride height).
-    y_knuckle = g.track_width_mm / 2.0
-    z_hub = g.ride_height_mm
-    hw_x = k.thickness_mm / 2.0          # longitudinal half-width of the upright
-    hw_y = k.width_mm / 2.0              # lateral half-width of the upright
-    yc = sign * y_knuckle
-    knuckle_profile = [
-        (-hw_x, yc - hw_y), (hw_x, yc - hw_y),
-        (hw_x, yc + hw_y), (-hw_x, yc + hw_y),
-    ]
+    def M(pt: Vec3) -> Vec3:
+        """Mirror a LITERAL world point onto the opposite corner (axle preview)."""
+        return _mirror_corner(pt, track) if mirror else pt
+
+    def P(name: str) -> Vec3:
+        """A named hardpoint, mirrored for the opposite corner when requested."""
+        return M(hp[name])
+
+    steps: List[BuildStep] = []
     kid = "knuckle_%s" % tag
+
+    # --- KNUCKLE / UPRIGHT -------------------------------------------------- #
+    # A vertical box upright straddling the hub centre (local origin), spanning the
+    # lower ball joint (below) to the upper mount (above). Built as a +Z prism:
+    # section = thickness (X) x width (Y), extruded up Z. The hub bore is cut along
+    # the lateral (Y) wheel-spin axis.
+    z_lo = P("lower_ball_joint")[2] - 10.0
+    z_hi = (P("upper_ball_joint")[2] if g.type in ("multilink", "double_wishbone")
+            else P("strut_top")[2]) + 10.0
+    upright_h = max(k.height_mm, z_hi - z_lo)
     steps.append(BuildStep(
-        id=kid, role="knuckle", kind="extrude", boolean="create",
+        id=kid, role="knuckle", kind="prism", boolean="create",
         body_name="Knuckle_Upright_%s" % U, material="cast_al", color=COL_KNUCKLE,
-        profile=knuckle_profile, z0=z_hub - k.height_mm / 2.0, length=k.height_mm))
-    # wheel-hub bearing bore through the upright (matches the Gen-3 hub OD). The bore
-    # is a +Z cylinder through the block (a representative blank bore).
-    steps.append(BuildStep(
-        id="knuckle_hub_bore_%s" % tag, role="hub_bore_cut", kind="cylinder",
-        boolean="subtract", target=kid, body_name="Hub_Bore_%s" % U,
-        material="air", color=COL_AIR, outer_radius=k.hub_bore_diameter_mm / 2.0,
-        cx=0.0, cy=yc, z0=z_hub - k.height_mm / 2.0 - 0.5, length=k.height_mm + 1.0))
-    # brake-caliper mount lug (a small raised boss united to the upright)
+        profile=_rect_uv(k.thickness_mm, k.width_mm),
+        origin3=M((0.0, 0.0, z_lo)), axis=(0.0, 0.0, 1.0), u_dir=(1.0, 0.0, 0.0),
+        length=upright_h))
+    # wheel-hub bearing bore: a cylinder coaxial with the lateral wheel-spin axis
+    # (local Y) through the hub centre (origin). Matches the Gen-3 hub OD.
+    bore_half = k.width_mm / 2.0 + 1.0
+    steps.append(_axis_cyl(
+        "knuckle_hub_bore_%s" % tag, "hub_bore_cut", "Hub_Bore_%s" % U,
+        M((0.0, -bore_half, 0.0)), M((0.0, bore_half, 0.0)),
+        k.hub_bore_diameter_mm, COL_AIR, material="air",
+        boolean="subtract", target=kid))
+    # brake-caliper mount lug: a boss united to the upright, set fore (+X) of the
+    # hub at the typical trailing/leading caliper clock position.
     if k.brake_caliper_mount:
-        steps.append(BuildStep(
-            id="caliper_mount_%s" % tag, role="caliper_mount", kind="cylinder",
-            boolean="unite", target=kid, body_name="Caliper_Mount_%s" % U,
-            material="cast_al", color=COL_KNUCKLE, outer_radius=18.0,
-            cx=hw_x, cy=yc, z0=z_hub + k.height_mm / 4.0, length=k.thickness_mm))
+        cm = P("caliper_mount")
+        steps.append(_axis_cyl(
+            "caliper_mount_%s" % tag, "caliper_mount", "Caliper_Mount_%s" % U,
+            M((0.0, hp["caliper_mount"][1], hp["caliper_mount"][2])), cm,
+            k.hub_bore_diameter_mm * 0.45, COL_KNUCKLE,
+            material="cast_al", boolean="unite", target=kid))
 
-    # control arms as thin horizontal box blanks from inboard pickup -> knuckle.
-    # Inboard pickups sit a short distance off the centre-plane; outboard ends reach
-    # the knuckle face. Each arm sits at its own Z plane.
-    inboard_y = max(20.0, y_knuckle - g.lower_arm_length_mm)
-    arm_t = max(8.0, arm.arm_diameter_mm)          # box thickness ~ the bar diameter
-    arm_w = max(20.0, arm.arm_diameter_mm + 12.0)  # longitudinal box width
+    # --- LOWER CONTROL ARM (A-arm: fore + aft legs) ------------------------- #
+    obj = P("lower_ball_joint")
+    arm_w = max(20.0, arm.arm_diameter_mm + 12.0)   # in-plane leg width
+    arm_h = max(10.0, arm.arm_diameter_mm)          # leg thickness
+    steps.append(_prism_link(
+        "lower_arm_fore_%s" % tag, "lower_arm", "Lower_Arm_Fore_%s" % U,
+        P("lower_pickup_fore"), obj, arm_w, arm_h, COL_ARM, u_dir=(0.0, 0.0, 1.0)))
+    steps.append(_prism_link(
+        "lower_arm_aft_%s" % tag, "lower_arm", "Lower_Arm_Aft_%s" % U,
+        P("lower_pickup_aft"), obj, arm_w, arm_h, COL_ARM, u_dir=(0.0, 0.0, 1.0)))
 
-    # lower control arm (low Z)
-    steps.append(_arm_box(
-        "lower_arm_%s" % tag, "lower_arm", "Lower_Control_Arm_%s" % U,
-        inboard_y, y_knuckle - hw_y, z_hub - k.height_mm / 2.0,
-        arm_w, arm_t, sign))
-    # upper arm (high Z) -- only multilink / double_wishbone carry a real upper arm;
-    # MacPherson uses the strut as the upper link (modelled by the damper below).
-    upper_in_y = max(20.0, y_knuckle - g.upper_arm_length_mm)
+    # --- UPPER CONTROL ARM (multilink / double_wishbone only) --------------- #
     if g.type in ("multilink", "double_wishbone"):
-        steps.append(_arm_box(
-            "upper_arm_%s" % tag, "upper_arm", "Upper_Control_Arm_%s" % U,
-            upper_in_y, y_knuckle - hw_y, z_hub + k.height_mm / 2.0 - arm_t,
-            arm_w, arm_t, sign))
-    # toe / tie link (mid Z, set rearward in X)
-    toe_in_y = max(20.0, y_knuckle - g.toe_link_length_mm)
-    steps.append(BuildStep(
-        id="toe_link_%s" % tag, role="toe_link", kind="extrude", boolean="create",
-        body_name="Toe_Link_%s" % U, material="arm_steel", color=COL_ARM,
-        profile=_toe_profile(toe_in_y, y_knuckle - hw_y, arm_w, sign),
-        z0=z_hub - arm_t / 2.0, length=arm_t))
+        obu = P("upper_ball_joint")
+        steps.append(_prism_link(
+            "upper_arm_fore_%s" % tag, "upper_arm", "Upper_Arm_Fore_%s" % U,
+            P("upper_pickup_fore"), obu, arm_w, arm_h, COL_ARM, u_dir=(0.0, 0.0, 1.0)))
+        steps.append(_prism_link(
+            "upper_arm_aft_%s" % tag, "upper_arm", "Upper_Arm_Aft_%s" % U,
+            P("upper_pickup_aft"), obu, arm_w, arm_h, COL_ARM, u_dir=(0.0, 0.0, 1.0)))
 
-    # inboard compliance bushings + outboard ball joints (small +Z cylinders)
-    bj_len = max(10.0, arm.ball_joint_diameter_mm)
-    bh_len = max(12.0, arm.bushing_diameter_mm / 2.0)
-    steps.append(_mount("lower_bushing_%s" % tag, "bushing", "Lower_Arm_Bushing_%s" % U,
-                        0.0, inboard_y, z_hub - k.height_mm / 2.0 - bh_len / 2.0,
-                        arm.bushing_diameter_mm, bh_len, sign))
-    steps.append(_mount("lower_balljoint_%s" % tag, "ball_joint", "Lower_Ball_Joint_%s" % U,
-                        0.0, y_knuckle - hw_y, z_hub - k.height_mm / 2.0 - bj_len / 2.0,
-                        arm.ball_joint_diameter_mm, bj_len, sign))
+    # --- TOE / TIE LINK (rearward, single bar) ------------------------------ #
+    steps.append(_prism_link(
+        "toe_link_%s" % tag, "toe_link", "Toe_Link_%s" % U,
+        P("toe_pickup"), P("toe_outboard"), arm_h, arm_h, COL_ARM,
+        u_dir=(0.0, 0.0, 1.0)))
+
+    # --- INBOARD BUSHINGS + OUTBOARD BALL JOINTS (3D placed) ---------------- #
+    bj_d = arm.ball_joint_diameter_mm
+    bush_d = arm.bushing_diameter_mm
+    bush_l = max(12.0, bush_d / 2.0)
+
+    def _bushing(name: str, pt: Vec3, axis_along: Vec3):
+        """A compliance bushing as a short tube-less cylinder centred on the pickup,
+        its bore axis along the link's longitudinal run."""
+        n = _norm(axis_along) or 1.0
+        ua = (axis_along[0] / n, axis_along[1] / n, axis_along[2] / n)
+        p0 = (pt[0] - 0.5 * bush_l * ua[0], pt[1] - 0.5 * bush_l * ua[1],
+              pt[2] - 0.5 * bush_l * ua[2])
+        p1 = (pt[0] + 0.5 * bush_l * ua[0], pt[1] + 0.5 * bush_l * ua[1],
+              pt[2] + 0.5 * bush_l * ua[2])
+        steps.append(_axis_cyl(name, "bushing", "Bushing_%s" % U.lower(), p0, p1,
+                               bush_d, COL_MOUNT))
+
+    def _balljoint(name: str, pt: Vec3):
+        """A ball joint as a small sphere-ish stub (short vertical cylinder) at the
+        outboard hardpoint."""
+        p0 = (pt[0], pt[1], pt[2] - bj_d / 2.0)
+        p1 = (pt[0], pt[1], pt[2] + bj_d / 2.0)
+        steps.append(_axis_cyl(name, "ball_joint", "Ball_Joint_%s" % U.lower(), p0, p1,
+                               bj_d, COL_MOUNT))
+
+    _bushing("lower_bushing_fore_%s" % tag, P("lower_pickup_fore"),
+             _sub(obj, P("lower_pickup_fore")))
+    _bushing("lower_bushing_aft_%s" % tag, P("lower_pickup_aft"),
+             _sub(obj, P("lower_pickup_aft")))
+    _balljoint("lower_balljoint_%s" % tag, obj)
     if g.type in ("multilink", "double_wishbone"):
-        steps.append(_mount("upper_bushing_%s" % tag, "bushing", "Upper_Arm_Bushing_%s" % U,
-                            0.0, upper_in_y, z_hub + k.height_mm / 2.0 - bh_len,
-                            arm.bushing_diameter_mm, bh_len, sign))
-        steps.append(_mount("upper_balljoint_%s" % tag, "ball_joint", "Upper_Ball_Joint_%s" % U,
-                            0.0, y_knuckle - hw_y, z_hub + k.height_mm / 2.0 - bj_len,
-                            arm.ball_joint_diameter_mm, bj_len, sign))
+        obu = P("upper_ball_joint")
+        _bushing("upper_bushing_fore_%s" % tag, P("upper_pickup_fore"),
+                 _sub(obu, P("upper_pickup_fore")))
+        _bushing("upper_bushing_aft_%s" % tag, P("upper_pickup_aft"),
+                 _sub(obu, P("upper_pickup_aft")))
+        _balljoint("upper_balljoint_%s" % tag, obu)
 
-    # coil spring as a hollow tube blank, standing up the local Z just inboard of
-    # the knuckle (a representative spring seat position).
-    spring_y = y_knuckle - g.upper_arm_length_mm / 2.0
-    coil_r = s.coil_outer_diameter_mm / 2.0
-    steps.append(BuildStep(
-        id="spring_%s" % tag, role="spring", kind="tube", boolean="create",
-        body_name="Coil_Spring_%s" % U, material="spring_steel", color=COL_SPRING,
-        outer_radius=coil_r, inner_radius=max(2.0, coil_r - 12.0),
-        cx=0.0, cy=sign * spring_y, z0=z_hub - k.height_mm / 2.0,
-        length=s.free_length_mm))
-
-    # damper as a +Z cylinder beside the spring (the strut for MacPherson)
-    damper_y = spring_y - s.coil_outer_diameter_mm / 2.0 - d.damper_diameter_mm / 2.0 - 10.0
+    # --- COIL SPRING + DAMPER (real inclination) ---------------------------- #
+    # Both run from the lower spring/damper seat on the lower arm up to a body mount.
+    seat = P("damper_lower")
+    top = P("damper_top")
+    coil_d = s.coil_outer_diameter_mm
     if g.type == "macpherson":
-        damper_y = spring_y  # coaxial strut: damper inside the spring envelope
-    steps.append(BuildStep(
-        id="damper_%s" % tag, role="damper", kind="cylinder", boolean="create",
-        body_name="Damper_%s" % U, material="damper_steel", color=COL_DAMPER,
-        outer_radius=d.damper_diameter_mm / 2.0, cx=0.0, cy=sign * damper_y,
-        z0=z_hub - k.height_mm / 2.0, length=d.damper_length_mm))
+        # Coaxial strut: the damper is the upper link, running through the upright
+        # top (strut_top), and the coil seats concentrically around it.
+        strut_lo = P("lower_ball_joint")
+        strut_hi = P("strut_top")
+        steps.append(_axis_cyl(
+            "damper_%s" % tag, "damper", "Strut_Damper_%s" % U, strut_lo, strut_hi,
+            d.damper_diameter_mm, COL_DAMPER, material="damper_steel"))
+        # coil seats around the strut over its sprung working length
+        s_lo = (strut_lo[0], strut_lo[1], strut_lo[2] + 0.20 * (strut_hi[2] - strut_lo[2]))
+        s_hi = (strut_lo[0] + 0.85 * (strut_hi[0] - strut_lo[0]),
+                strut_lo[1] + 0.85 * (strut_hi[1] - strut_lo[1]),
+                strut_lo[2] + 0.85 * (strut_hi[2] - strut_lo[2]))
+        steps.append(_axis_tube(
+            "spring_%s" % tag, "spring", "Coil_Spring_%s" % U, s_lo, s_hi,
+            coil_d, coil_d - 24.0, COL_SPRING, material="spring_steel"))
+    else:
+        # Separate inclined coil-over (spring around the damper body) -- a typical
+        # multilink/wishbone packaging: a single inclined unit on the lower arm.
+        steps.append(_axis_cyl(
+            "damper_%s" % tag, "damper", "Damper_%s" % U, seat, top,
+            d.damper_diameter_mm, COL_DAMPER, material="damper_steel"))
+        # spring around the lower 75 % of the damper run
+        sp_hi = (seat[0] + 0.78 * (top[0] - seat[0]),
+                 seat[1] + 0.78 * (top[1] - seat[1]),
+                 seat[2] + 0.78 * (top[2] - seat[2]))
+        steps.append(_axis_tube(
+            "spring_%s" % tag, "spring", "Coil_Spring_%s" % U, seat, sp_hi,
+            coil_d, coil_d - 24.0, COL_SPRING, material="spring_steel"))
 
-    # anti-roll bar drop-link stub as a +Z cylinder near the lower arm (the bar
-    # proper runs across the axle; here we represent the corner's drop link).
+    # --- ANTI-ROLL (STABILISER) DROP LINK ----------------------------------- #
+    # The bar proper runs across the axle inboard; this corner carries the vertical
+    # drop link from the lower arm up to the bar end. Modelled at its true near-
+    # vertical inclination.
     if a.enabled:
-        steps.append(BuildStep(
-            id="antiroll_%s" % tag, role="anti_roll_bar", kind="cylinder",
-            boolean="create", body_name="Anti_Roll_Link_%s" % U, material="bar_steel",
-            color=COL_ARB, outer_radius=a.bar_diameter_mm / 2.0, cx=0.0,
-            cy=sign * (inboard_y + a.arm_length_mm / 2.0),
-            z0=z_hub - k.height_mm / 2.0, length=a.arm_length_mm))
+        steps.append(_axis_cyl(
+            "antiroll_%s" % tag, "anti_roll_bar", "Anti_Roll_Link_%s" % U,
+            P("arb_link_lower"), P("arb_link_upper"), a.bar_diameter_mm, COL_ARB,
+            material="bar_steel"))
     return steps
 
 
-def _toe_profile(y_in: float, y_out: float, width: float, sign: int):
-    """Toe-link box profile, offset rearward in X so it does not overlap the arms."""
-    ya, yb = sign * y_in, sign * y_out
-    ylo, yhi = (ya, yb) if ya <= yb else (yb, ya)
-    x0 = -width * 1.5
-    return [(x0, ylo), (x0 + width, ylo), (x0 + width, yhi), (x0, yhi)]
-
-
 def _corners(p: SuspensionParams):
-    """Yield (tag, sign) for each modelled corner."""
+    """Yield (tag, mirror) per modelled corner. `corners="axle"` adds the mirrored
+    opposite corner for a standalone two-corner preview; the reference corner is
+    always the canonical (un-mirrored) one whose hub is on the local origin."""
     if p.corners == "axle":
-        return [("r", +1), ("l", -1)]
-    return [("r", +1)]
+        return [("r", False), ("l", True)]
+    return [("r", False)]
 
 
 def build_steps(p: SuspensionParams) -> List[BuildStep]:
     steps: List[BuildStep] = []
-    for tag, sign in _corners(p):
-        steps.extend(corner_steps(p, tag, sign))
+    for tag, mirror in _corners(p):
+        steps.extend(corner_steps(p, tag, mirror))
     return steps
 
 
@@ -229,6 +344,7 @@ def generate(p: SuspensionParams = None) -> Dict[str, Any]:
             {"name": n, "value": v, "unit": u} for (n, v, u) in p.expressions()
         ],
         "derived": asdict(g),
+        "hardpoints": {k: list(v) for k, v in engineering.hardpoints(p).items()},
         "validation": engineering.validate(p),
         "build_steps": [step.as_dict() for step in steps],
     }

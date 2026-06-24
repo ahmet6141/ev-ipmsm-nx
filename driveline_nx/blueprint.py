@@ -138,7 +138,13 @@ def side_steps(p: DrivelineParams, tag: str, sign: int) -> List[BuildStep]:
     d, h, w = p.differential, p.halfshaft, p.wheel_hub
     steps: List[BuildStep] = []
     U = tag.upper()
-    ref = sign * (d.carrier_length / 2.0 + 5.0)   # start just outside the carrier
+    # Start just outside the carrier, after the SOLVED inboard plunge clearance. This
+    # gap (engineering.inboard_clearance) is sized so the chain's final wheel-hub
+    # flange OUTER face lands at local z = +-target_track/2 (ICD §3/§4 track tie),
+    # i.e. on the shared HUB_CENTRE after the assembly Rx(-90). It is the one slack
+    # term in the chain; every other length is a catalogue component dimension.
+    clearance = engineering.inboard_clearance(p)
+    ref = sign * (d.carrier_length / 2.0 + clearance)   # start just outside the carrier
 
     def hollow(shaft_id: str, z0: float, length: float):
         """Bore a coaxial hole through a just-created shaft body (hollow shaft)."""
