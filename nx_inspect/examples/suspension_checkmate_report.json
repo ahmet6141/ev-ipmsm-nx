@@ -1,0 +1,1205 @@
+{
+  "tool": "nx_inspect",
+  "schema": "1",
+  "part": "suspension_out",
+  "path": "C:\\Users\\ahmet\\Desktop\\web\\motor\\vehicle_nx\\suspension_out.prt",
+  "units": "mm",
+  "is_assembly": false,
+  "config": {
+    "grid": 10,
+    "tol_mm3": 50.0,
+    "tiny_mm3": 30.0,
+    "dup_mm": 1.0,
+    "checks": [
+      "interference",
+      "zero_volume",
+      "tiny_body",
+      "duplicate_body",
+      "unnamed_body",
+      "duplicate_name",
+      "checkmate"
+    ]
+  },
+  "summary": {
+    "n_bodies": 56,
+    "errors": 1,
+    "warnings": 0,
+    "info": 2,
+    "checks_run": [
+      "interference",
+      "zero_volume",
+      "tiny_body",
+      "duplicate_body",
+      "unnamed_body",
+      "duplicate_name",
+      "checkmate"
+    ]
+  },
+  "components": [],
+  "bodies": [
+    {
+      "id": 0,
+      "name": "KNUCKLE_UPRIGHT_R",
+      "volume_mm3": 859834.94,
+      "area_mm2": 123138.15,
+      "mass_kg": 6.7331,
+      "centroid": [
+        -0.38,
+        -14.9,
+        0.55
+      ],
+      "bbox": [
+        -86.0,
+        -84.7,
+        -80.96,
+        58.0,
+        66.0,
+        80.96
+      ]
+    },
+    {
+      "id": 1,
+      "name": "LOWER_ARM_HUB_R",
+      "volume_mm3": 801102.85,
+      "area_mm2": 121307.09,
+      "mass_kg": 6.2731,
+      "centroid": [
+        7.9,
+        -279.91,
+        -78.62
+      ],
+      "bbox": [
+        -138.0,
+        -476.26,
+        -118.78,
+        151.98,
+        -45.1,
+        -32.2
+      ]
+    },
+    {
+      "id": 2,
+      "name": "LOWER_BJ_HOUSING_R",
+      "volume_mm3": 11475.83,
+      "area_mm2": 3468.13,
+      "mass_kg": 0.0899,
+      "centroid": [
+        8.51,
+        -66.0,
+        -97.26
+      ],
+      "bbox": [
+        -2.44,
+        -76.6,
+        -117.89,
+        20.79,
+        -55.4,
+        -56.65
+      ]
+    },
+    {
+      "id": 3,
+      "name": "BUSHING_LOWER_FORE_R",
+      "volume_mm3": 21660.4,
+      "area_mm2": 7247.28,
+      "mass_kg": 0.1696,
+      "centroid": [
+        127.09,
+        -446.0,
+        -58.2
+      ],
+      "bbox": [
+        107.79,
+        -469.25,
+        -78.2,
+        146.38,
+        -422.75,
+        -38.2
+      ]
+    },
+    {
+      "id": 4,
+      "name": "BUSHING_SLEEVE_LOWER_FORE_R",
+      "volume_mm3": 9091.67,
+      "area_mm2": 3476.61,
+      "mass_kg": 0.0712,
+      "centroid": [
+        127.09,
+        -446.0,
+        -58.2
+      ],
+      "bbox": [
+        111.5,
+        -461.19,
+        -70.2,
+        142.68,
+        -430.81,
+        -46.2
+      ]
+    },
+    {
+      "id": 5,
+      "name": "BOLT_SHANK_LOWER_FORE_R",
+      "volume_mm3": 1343.72,
+      "area_mm2": 863.06,
+      "mass_kg": 0.0105,
+      "centroid": [
+        127.09,
+        -446.0,
+        -58.2
+      ],
+      "bbox": [
+        108.41,
+        -454.73,
+        -61.6,
+        145.76,
+        -437.27,
+        -54.8
+      ]
+    },
+    {
+      "id": 6,
+      "name": "BOLT_HEAD_LOWER_FORE_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        107.32,
+        -452.13,
+        -58.2
+      ],
+      "bbox": [
+        101.95,
+        -461.91,
+        -67.6,
+        112.68,
+        -442.36,
+        -48.8
+      ]
+    },
+    {
+      "id": 7,
+      "name": "BOLT_NUT_LOWER_FORE_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        146.86,
+        -439.87,
+        -58.2
+      ],
+      "bbox": [
+        141.49,
+        -449.64,
+        -67.6,
+        152.22,
+        -430.09,
+        -48.8
+      ]
+    },
+    {
+      "id": 8,
+      "name": "BUSHING_LOWER_AFT_R",
+      "volume_mm3": 21660.4,
+      "area_mm2": 7247.28,
+      "mass_kg": 0.1696,
+      "centroid": [
+        -112.91,
+        -446.0,
+        -58.2
+      ],
+      "bbox": [
+        -132.36,
+        -469.32,
+        -78.2,
+        -93.47,
+        -422.68,
+        -38.2
+      ]
+    },
+    {
+      "id": 9,
+      "name": "BUSHING_SLEEVE_LOWER_AFT_R",
+      "volume_mm3": 9091.67,
+      "area_mm2": 3476.61,
+      "mass_kg": 0.0712,
+      "centroid": [
+        -112.91,
+        -446.0,
+        -58.2
+      ],
+      "bbox": [
+        -128.58,
+        -461.28,
+        -70.2,
+        -97.25,
+        -430.72,
+        -46.2
+      ]
+    },
+    {
+      "id": 10,
+      "name": "BOLT_SHANK_LOWER_AFT_R",
+      "volume_mm3": 1343.72,
+      "area_mm2": 863.06,
+      "mass_kg": 0.0105,
+      "centroid": [
+        -112.91,
+        -446.0,
+        -58.2
+      ],
+      "bbox": [
+        -131.57,
+        -454.9,
+        -61.6,
+        -94.26,
+        -437.1,
+        -54.8
+      ]
+    },
+    {
+      "id": 11,
+      "name": "BOLT_HEAD_LOWER_AFT_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        -132.62,
+        -439.67,
+        -58.2
+      ],
+      "bbox": [
+        -138.07,
+        -449.44,
+        -67.6,
+        -127.18,
+        -429.89,
+        -48.8
+      ]
+    },
+    {
+      "id": 12,
+      "name": "BOLT_NUT_LOWER_AFT_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        -93.21,
+        -452.33,
+        -58.2
+      ],
+      "bbox": [
+        -98.65,
+        -462.11,
+        -67.6,
+        -87.76,
+        -442.56,
+        -48.8
+      ]
+    },
+    {
+      "id": 13,
+      "name": "UPPER_ARM_HUB_R",
+      "volume_mm3": 533135.49,
+      "area_mm2": 94300.34,
+      "mass_kg": 4.1748,
+      "centroid": [
+        -7.87,
+        -232.99,
+        74.91
+      ],
+      "bbox": [
+        -153.35,
+        -396.87,
+        25.0,
+        139.39,
+        -45.1,
+        118.78
+      ]
+    },
+    {
+      "id": 14,
+      "name": "UPPER_BJ_HOUSING_R",
+      "volume_mm3": 11475.83,
+      "area_mm2": 3468.13,
+      "mass_kg": 0.0899,
+      "centroid": [
+        -8.51,
+        -66.0,
+        97.26
+      ],
+      "bbox": [
+        -20.79,
+        -76.6,
+        56.65,
+        2.44,
+        -55.4,
+        117.89
+      ]
+    },
+    {
+      "id": 15,
+      "name": "BUSHING_UPPER_FORE_R",
+      "volume_mm3": 21660.4,
+      "area_mm2": 7247.28,
+      "mass_kg": 0.1696,
+      "centroid": [
+        112.91,
+        -366.0,
+        51.0
+      ],
+      "bbox": [
+        92.41,
+        -389.8,
+        31.0,
+        133.42,
+        -342.2,
+        71.0
+      ]
+    },
+    {
+      "id": 16,
+      "name": "BUSHING_SLEEVE_UPPER_FORE_R",
+      "volume_mm3": 9091.67,
+      "area_mm2": 3476.61,
+      "mass_kg": 0.0712,
+      "centroid": [
+        112.91,
+        -366.0,
+        51.0
+      ],
+      "bbox": [
+        96.72,
+        -381.86,
+        39.0,
+        129.11,
+        -350.14,
+        63.0
+      ]
+    },
+    {
+      "id": 17,
+      "name": "BOLT_SHANK_UPPER_FORE_R",
+      "volume_mm3": 1343.72,
+      "area_mm2": 863.06,
+      "mass_kg": 0.0105,
+      "centroid": [
+        112.91,
+        -366.0,
+        51.0
+      ],
+      "bbox": [
+        94.5,
+        -376.12,
+        47.6,
+        131.33,
+        -355.88,
+        54.4
+      ]
+    },
+    {
+      "id": 18,
+      "name": "BOLT_HEAD_UPPER_FORE_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        93.74,
+        -373.8,
+        51.0
+      ],
+      "bbox": [
+        87.7,
+        -383.53,
+        41.6,
+        99.78,
+        -364.08,
+        60.4
+      ]
+    },
+    {
+      "id": 19,
+      "name": "BOLT_NUT_UPPER_FORE_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        132.09,
+        -358.2,
+        51.0
+      ],
+      "bbox": [
+        126.04,
+        -367.92,
+        41.6,
+        138.13,
+        -348.47,
+        60.4
+      ]
+    },
+    {
+      "id": 20,
+      "name": "BUSHING_UPPER_AFT_R",
+      "volume_mm3": 21660.4,
+      "area_mm2": 7247.28,
+      "mass_kg": 0.1696,
+      "centroid": [
+        -127.09,
+        -366.0,
+        51.0
+      ],
+      "bbox": [
+        -147.43,
+        -389.74,
+        31.0,
+        -106.74,
+        -342.26,
+        71.0
+      ]
+    },
+    {
+      "id": 21,
+      "name": "BUSHING_SLEEVE_UPPER_AFT_R",
+      "volume_mm3": 9091.67,
+      "area_mm2": 3476.61,
+      "mass_kg": 0.0712,
+      "centroid": [
+        -127.09,
+        -366.0,
+        51.0
+      ],
+      "bbox": [
+        -143.2,
+        -381.78,
+        39.0,
+        -110.97,
+        -350.22,
+        63.0
+      ]
+    },
+    {
+      "id": 22,
+      "name": "BOLT_SHANK_UPPER_AFT_R",
+      "volume_mm3": 1343.72,
+      "area_mm2": 863.06,
+      "mass_kg": 0.0105,
+      "centroid": [
+        -127.09,
+        -366.0,
+        51.0
+      ],
+      "bbox": [
+        -145.55,
+        -375.93,
+        47.6,
+        -108.62,
+        -356.07,
+        54.4
+      ]
+    },
+    {
+      "id": 23,
+      "name": "BOLT_HEAD_UPPER_AFT_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        -146.35,
+        -358.43,
+        51.0
+      ],
+      "bbox": [
+        -152.3,
+        -368.16,
+        41.6,
+        -140.4,
+        -348.69,
+        60.4
+      ]
+    },
+    {
+      "id": 24,
+      "name": "BOLT_NUT_UPPER_AFT_R",
+      "volume_mm3": 1498.99,
+      "area_mm2": 874.12,
+      "mass_kg": 0.0117,
+      "centroid": [
+        -107.82,
+        -373.57,
+        51.0
+      ],
+      "bbox": [
+        -113.77,
+        -383.31,
+        41.6,
+        -101.87,
+        -363.84,
+        60.4
+      ]
+    },
+    {
+      "id": 25,
+      "name": "TOE_LINK_R",
+      "volume_mm3": 62231.8,
+      "area_mm2": 19997.79,
+      "mass_kg": 0.4873,
+      "centroid": [
+        -123.66,
+        -230.27,
+        7.95
+      ],
+      "bbox": [
+        -184.47,
+        -395.23,
+        -6.0,
+        -58.0,
+        -44.08,
+        22.0
+      ]
+    },
+    {
+      "id": 26,
+      "name": "BUSHING_TOE_IN_R",
+      "volume_mm3": 3788.45,
+      "area_mm2": 2588.56,
+      "mass_kg": 0.0297,
+      "centroid": [
+        -168.0,
+        -378.08,
+        8.0
+      ],
+      "bbox": [
+        -182.95,
+        -390.13,
+        -0.68,
+        -153.05,
+        -366.03,
+        16.68
+      ]
+    },
+    {
+      "id": 27,
+      "name": "BUSHING_SLEEVE_TOE_IN_R",
+      "volume_mm3": 1454.9,
+      "area_mm2": 1186.37,
+      "mass_kg": 0.0114,
+      "centroid": [
+        -168.0,
+        -378.08,
+        8.0
+      ],
+      "bbox": [
+        -180.64,
+        -386.21,
+        3.02,
+        -155.36,
+        -369.95,
+        12.98
+      ]
+    },
+    {
+      "id": 28,
+      "name": "BOLT_SHANK_TOE_IN_R",
+      "volume_mm3": 439.82,
+      "area_mm2": 464.96,
+      "mass_kg": 0.0034,
+      "centroid": [
+        -168.0,
+        -378.08,
+        8.0
+      ],
+      "bbox": [
+        -185.34,
+        -385.02,
+        6.0,
+        -150.66,
+        -371.14,
+        10.0
+      ]
+    },
+    {
+      "id": 29,
+      "name": "BOLT_HEAD_TOE_IN_R",
+      "volume_mm3": 611.97,
+      "area_mm2": 440.88,
+      "mass_kg": 0.0048,
+      "centroid": [
+        -186.68,
+        -372.48,
+        8.0
+      ],
+      "bbox": [
+        -190.87,
+        -379.17,
+        1.76,
+        -182.49,
+        -365.78,
+        14.24
+      ]
+    },
+    {
+      "id": 30,
+      "name": "BOLT_NUT_TOE_IN_R",
+      "volume_mm3": 611.97,
+      "area_mm2": 440.88,
+      "mass_kg": 0.0048,
+      "centroid": [
+        -149.32,
+        -383.68,
+        8.0
+      ],
+      "bbox": [
+        -153.51,
+        -390.38,
+        1.76,
+        -145.13,
+        -376.99,
+        14.24
+      ]
+    },
+    {
+      "id": 31,
+      "name": "BOLT_SHANK_TOE_OUT_R",
+      "volume_mm3": 1588.39,
+      "area_mm2": 894.73,
+      "mass_kg": 0.0124,
+      "centroid": [
+        -72.0,
+        -58.08,
+        1.5
+      ],
+      "bbox": [
+        -76.0,
+        -62.08,
+        -14.3,
+        -68.0,
+        -54.08,
+        17.3
+      ]
+    },
+    {
+      "id": 32,
+      "name": "BOLT_HEAD_TOE_OUT_R",
+      "volume_mm3": 1560.93,
+      "area_mm2": 863.37,
+      "mass_kg": 0.0122,
+      "centroid": [
+        -72.0,
+        -58.08,
+        -16.8
+      ],
+      "bbox": [
+        -81.1,
+        -67.18,
+        -19.8,
+        -62.9,
+        -48.98,
+        -13.8
+      ]
+    },
+    {
+      "id": 33,
+      "name": "BOLT_NUT_TOE_OUT_R",
+      "volume_mm3": 1560.93,
+      "area_mm2": 863.37,
+      "mass_kg": 0.0122,
+      "centroid": [
+        -72.0,
+        -58.08,
+        19.8
+      ],
+      "bbox": [
+        -81.1,
+        -67.18,
+        16.8,
+        -62.9,
+        -48.98,
+        22.8
+      ]
+    },
+    {
+      "id": 34,
+      "name": "DAMPER_R",
+      "volume_mm3": 402735.44,
+      "area_mm2": 47327.18,
+      "mass_kg": 3.1537,
+      "centroid": [
+        -0.0,
+        -277.43,
+        71.75
+      ],
+      "bbox": [
+        -23.0,
+        -376.28,
+        -69.61,
+        23.0,
+        -214.97,
+        373.19
+      ]
+    },
+    {
+      "id": 35,
+      "name": "SPRING_PERCH_LO_R",
+      "volume_mm3": 236395.89,
+      "area_mm2": 41165.15,
+      "mass_kg": 1.8511,
+      "centroid": [
+        -0.0,
+        -298.98,
+        143.61
+      ],
+      "bbox": [
+        -74.0,
+        -371.87,
+        115.64,
+        74.0,
+        -226.09,
+        171.58
+      ]
+    },
+    {
+      "id": 36,
+      "name": "SPRING_PERCH_HI_R",
+      "volume_mm3": 236395.89,
+      "area_mm2": 41165.15,
+      "mass_kg": 1.8511,
+      "centroid": [
+        0.0,
+        -342.33,
+        288.1
+      ],
+      "bbox": [
+        -74.0,
+        -415.22,
+        260.14,
+        74.0,
+        -269.44,
+        316.07
+      ]
+    },
+    {
+      "id": 37,
+      "name": "TOP_MOUNT_R",
+      "volume_mm3": 170114.57,
+      "area_mm2": 30728.77,
+      "mass_kg": 1.3321,
+      "centroid": [
+        0.0,
+        -358.98,
+        343.59
+      ],
+      "bbox": [
+        -63.0,
+        -421.33,
+        318.78,
+        63.0,
+        -296.62,
+        368.4
+      ]
+    },
+    {
+      "id": 38,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        0.0,
+        -303.8,
+        159.68
+      ],
+      "bbox": [
+        -70.0,
+        -372.82,
+        133.01,
+        70.0,
+        -234.79,
+        186.35
+      ]
+    },
+    {
+      "id": 39,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        -0.0,
+        -309.42,
+        178.4
+      ],
+      "bbox": [
+        -70.0,
+        -378.44,
+        151.74,
+        70.0,
+        -240.41,
+        205.07
+      ]
+    },
+    {
+      "id": 40,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        0.0,
+        -315.04,
+        197.13
+      ],
+      "bbox": [
+        -70.0,
+        -384.05,
+        170.46,
+        70.0,
+        -246.03,
+        223.8
+      ]
+    },
+    {
+      "id": 41,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        0.0,
+        -320.66,
+        215.86
+      ],
+      "bbox": [
+        -70.0,
+        -389.67,
+        189.19,
+        70.0,
+        -251.64,
+        242.53
+      ]
+    },
+    {
+      "id": 42,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        0.0,
+        -326.28,
+        234.58
+      ],
+      "bbox": [
+        -70.0,
+        -395.29,
+        207.92,
+        70.0,
+        -257.26,
+        261.25
+      ]
+    },
+    {
+      "id": 43,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        0.0,
+        -331.89,
+        253.31
+      ],
+      "bbox": [
+        -70.0,
+        -400.91,
+        226.64,
+        70.0,
+        -262.88,
+        279.98
+      ]
+    },
+    {
+      "id": 44,
+      "name": "COIL_SPRING_R",
+      "volume_mm3": 75843.23,
+      "area_mm2": 21918.29,
+      "mass_kg": 0.5939,
+      "centroid": [
+        0.0,
+        -337.51,
+        272.04
+      ],
+      "bbox": [
+        -70.0,
+        -406.53,
+        245.37,
+        70.0,
+        -268.5,
+        298.71
+      ]
+    },
+    {
+      "id": 45,
+      "name": "ANTI_ROLL_LINK_R",
+      "volume_mm3": 78924.45,
+      "area_mm2": 17942.37,
+      "mass_kg": 0.618,
+      "centroid": [
+        129.2,
+        -165.5,
+        15.0
+      ],
+      "bbox": [
+        110.0,
+        -181.75,
+        -94.72,
+        148.4,
+        -149.25,
+        124.72
+      ]
+    },
+    {
+      "id": 46,
+      "name": "BOLT_SHANK_ANTIROLL_HI_R",
+      "volume_mm3": 600.83,
+      "area_mm2": 519.93,
+      "mass_kg": 0.0047,
+      "centroid": [
+        129.2,
+        -170.0,
+        105.0
+      ],
+      "bbox": [
+        126.7,
+        -185.41,
+        101.74,
+        131.7,
+        -154.59,
+        108.26
+      ]
+    },
+    {
+      "id": 47,
+      "name": "BOLT_HEAD_ANTIROLL_HI_R",
+      "volume_mm3": 1134.9,
+      "area_mm2": 721.0,
+      "mass_kg": 0.0089,
+      "centroid": [
+        129.2,
+        -187.28,
+        104.14
+      ],
+      "bbox": [
+        120.7,
+        -190.2,
+        95.52,
+        137.7,
+        -184.36,
+        112.75
+      ]
+    },
+    {
+      "id": 48,
+      "name": "BOLT_NUT_ANTIROLL_HI_R",
+      "volume_mm3": 1134.9,
+      "area_mm2": 721.0,
+      "mass_kg": 0.0089,
+      "centroid": [
+        129.2,
+        -152.72,
+        105.86
+      ],
+      "bbox": [
+        120.7,
+        -155.64,
+        97.25,
+        137.7,
+        -149.8,
+        114.48
+      ]
+    },
+    {
+      "id": 49,
+      "name": "(unnamed)",
+      "volume_mm3": 8050.36,
+      "area_mm2": 2456.28,
+      "mass_kg": 0.063,
+      "centroid": [
+        67.56,
+        -158.48,
+        -74.87
+      ],
+      "bbox": [
+        56.71,
+        -170.36,
+        -87.88,
+        78.42,
+        -146.6,
+        -61.87
+      ]
+    },
+    {
+      "id": 50,
+      "name": "(unnamed)",
+      "volume_mm3": 6930.31,
+      "area_mm2": 2208.64,
+      "mass_kg": 0.0543,
+      "centroid": [
+        82.69,
+        -153.44,
+        -74.62
+      ],
+      "bbox": [
+        72.03,
+        -164.78,
+        -86.51,
+        93.35,
+        -142.09,
+        -62.74
+      ]
+    },
+    {
+      "id": 51,
+      "name": "(unnamed)",
+      "volume_mm3": 5890.26,
+      "area_mm2": 1971.04,
+      "mass_kg": 0.0461,
+      "centroid": [
+        97.81,
+        -148.39,
+        -74.37
+      ],
+      "bbox": [
+        87.34,
+        -159.2,
+        -85.13,
+        108.28,
+        -137.59,
+        -63.6
+      ]
+    },
+    {
+      "id": 52,
+      "name": "ANTI_ROLL_BRACKET_EYE_R",
+      "volume_mm3": 23641.19,
+      "area_mm2": 5405.49,
+      "mass_kg": 0.1851,
+      "centroid": [
+        129.2,
+        -137.93,
+        -73.85
+      ],
+      "bbox": [
+        110.0,
+        -149.67,
+        -93.56,
+        148.4,
+        -126.18,
+        -54.13
+      ]
+    },
+    {
+      "id": 53,
+      "name": "BOLT_SHANK_ANTIROLL_LO_R",
+      "volume_mm3": 1054.4,
+      "area_mm2": 882.79,
+      "mass_kg": 0.0083,
+      "centroid": [
+        129.2,
+        -149.46,
+        -74.42
+      ],
+      "bbox": [
+        126.7,
+        -176.41,
+        -78.26,
+        131.7,
+        -122.52,
+        -70.59
+      ]
+    },
+    {
+      "id": 54,
+      "name": "BOLT_HEAD_ANTIROLL_LO_R",
+      "volume_mm3": 1134.9,
+      "area_mm2": 721.0,
+      "mass_kg": 0.0089,
+      "centroid": [
+        129.2,
+        -178.28,
+        -75.86
+      ],
+      "bbox": [
+        120.7,
+        -181.2,
+        -84.48,
+        137.7,
+        -175.36,
+        -67.25
+      ]
+    },
+    {
+      "id": 55,
+      "name": "BOLT_NUT_ANTIROLL_LO_R",
+      "volume_mm3": 1134.9,
+      "area_mm2": 721.0,
+      "mass_kg": 0.0089,
+      "centroid": [
+        129.2,
+        -120.65,
+        -72.98
+      ],
+      "bbox": [
+        120.7,
+        -123.57,
+        -81.6,
+        137.7,
+        -117.73,
+        -64.37
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "check": "unnamed_body",
+      "severity": "info",
+      "title": "3 unnamed bodies",
+      "detail": "Unnamed bodies cannot be selected by role in FEA/CAM or grouped for per-part export.",
+      "bodies": [
+        "(unnamed)",
+        "(unnamed)",
+        "(unnamed)"
+      ],
+      "location": null,
+      "metric": {},
+      "suggestion": "Set body_name (Body.SetName) on every created body."
+    },
+    {
+      "check": "duplicate_name",
+      "severity": "info",
+      "title": "Name 'COIL_SPRING_R' used by 7 bodies",
+      "detail": "Several bodies share this display name - ambiguous for selection (fine for intended sets).",
+      "bodies": [
+        "COIL_SPRING_R"
+      ],
+      "location": null,
+      "metric": {
+        "count": 7
+      },
+      "suggestion": "Use a unique suffix per instance (e.g. COIL_SPRING_R_000, COIL_SPRING_R_001) if they are distinct parts."
+    },
+    {
+      "check": "checkmate",
+      "severity": "error",
+      "title": "Check-Mate: Faces - Spikes/Cuts",
+      "detail": "NX Check-Mate flagged 3 object(s) (status 3).",
+      "bodies": [],
+      "location": null,
+      "metric": {
+        "checker": "Faces - Spikes/Cuts",
+        "status": 3,
+        "object_count": 3
+      },
+      "suggestion": "Open Check-Mate (Analysis -> Examine Geometry / Check-Mate) on this checker to locate and fix the flagged 3 object(s)."
+    }
+  ]
+}

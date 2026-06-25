@@ -18,6 +18,13 @@ Checks (v1, all on APIs verified on NX 2506 hardware):
   duplicate_body — two bodies with the same volume + coincident centroid (a double-build). WARNING.
   unnamed_body   — a body with no display name (hurts FEA/CAM/per-part export). INFO.
   duplicate_name — the same name on multiple bodies (ambiguous selection). INFO.
+  checkmate      — runs NX's NATIVE Check-Mate validator (headless) with a curated set of
+                   %mqc_* geometry/standard checkers (body validity, face/body self-
+                   intersection, tiny objects, spiky/cut faces, edge tolerance, ...) and
+                   turns each non-passing test into a finding (severity from the Check-Mate
+                   status: 1=info, 2=warning, 3=error). Catches quality/standard defects the
+                   geometric checks above miss. Best-effort (skipped with an info note if the
+                   Check-Mate module/license is absent). Exclude via checks=... to skip.
 
 Verified NX 2506 API: UF.ModlGeneral.AskBoundingBox, UF.Modeling.AskPointContainment
 (1=inside / 2=outside), MeasureManager.NewMassProperties (.Volume/.Area/.Mass/.Centroid).
@@ -51,7 +58,22 @@ except Exception:  # pragma: no cover
 SCHEMA = "1"
 DEFAULTS = {"grid": 10, "tol": 50.0, "tiny": 30.0, "dup": 1.0}
 ALL_CHECKS = ["interference", "zero_volume", "tiny_body", "duplicate_body",
-              "unnamed_body", "duplicate_name"]
+              "unnamed_body", "duplicate_name", "checkmate"]
+
+# NX-native Check-Mate geometry/standard checkers (the %mqc_* class names from
+# DESIGN_TOOLS/checkmate/localization). Run headless via the Check-Mate validator to
+# catch quality/standard defects (invalid bodies, self-intersections, tiny slivers,
+# spiky/cut faces, loose tolerances) that the geometric checks above don't. Solid-body
+# focused; sheet-anomaly is left out by default (noisy on solid-only parts).
+CHECKMATE_CHECKERS = [
+    "%mqc_check_body_consistency", "%mqc_check_body_ff_intersect",
+    "%mqc_check_face_self_intersect", "%mqc_check_tiny_object",
+    "%mqc_check_body_boundaries", "%mqc_check_body_structure",
+    "%mqc_check_edge_tolerance", "%mqc_check_face_smooth", "%mqc_check_face_spike",
+]
+# Check-Mate Status (NXOpen.Validation.Result) -> our severity (calibrated on hardware:
+# 0 = pass, 1 = information, 2 = warning, 3 = error/failed). 0 emits no finding.
+_CM_SEVERITY = {0: None, 1: "info", 2: "warning", 3: "error"}
 
 
 # --------------------------------------------------------------------------- #
@@ -322,6 +344,76 @@ def run_checks(bodies, tags, cfg, lw):
     return findings
 
 
+def _checkmate_findings(part, lw):
+    """Run NX's NATIVE Check-Mate validator (headless) with the curated geometry/standard
+    checkers and turn each non-passing test into a finding. This is language-agnostic and
+    catches quality/standard defects (invalid bodies, self-intersections, spiky faces,
+    loose tolerances, tiny slivers) beyond the geometric checks. Best-effort: if Check-Mate
+    is unavailable/unlicensed it returns one info note rather than failing the whole run."""
+    out = []
+    try:
+        import NXOpen.Validate as _V
+        vm = NXOpen.Session.GetSession().ValidationManager
+        validators = vm.FindValidator("Check-Mate")
+        if not validators:
+            return [_finding("checkmate", "info", "Check-Mate unavailable",
+                             "No Check-Mate validator (module/license absent); native checks skipped.",
+                             suggestion="Enable the Check-Mate module to run native quality checks.")]
+        v = validators[0]
+        try:
+            o = v.ValidatorOptions
+            dns = _V.ValidatorOptions.SaveModeTypes.DoNotSave
+            o.SaveResultInTeamcenter = dns
+            o.SavePartFile = dns
+            o.SaveResultInPart = False
+        except Exception:
+            pass
+        v.ClearPartNodes(); v.AppendPartNode(part)
+        v.ClearCheckerNodes(); v.AppendCheckerNodes(CHECKMATE_CHECKERS)
+        v.Commit()
+        parsers = vm.FindParser("Validation Gadget")
+        if not parsers:
+            return out
+        p = parsers[0]
+        p.ClearResultObjects()
+        p.DataSource = _V.Parser.DataSourceTypes.MostRecentRun
+        try:
+            p.MaxDisplayObjects = 5000
+        except Exception:
+            pass
+        try:
+            p.Commit()
+        except Exception:
+            pass
+        for t in p.GetTestResultObjects():
+            # t.Status is a NXOpen.Validation.Result enum whose str() is the numeric code
+            # ("0"=pass,"1"=info,"2"=warning,"3"=error); int() on the enum itself raises.
+            try:
+                code = int(str(t.Status))
+            except Exception:
+                code = 3
+            sev = _CM_SEVERITY.get(code)
+            if sev is None:
+                continue  # passed
+            try:
+                nobj = len(p.GetObjectResultObjects(t))
+            except Exception:
+                nobj = 0
+            name = t.Name
+            out.append(_finding(
+                "checkmate", sev, "Check-Mate: %s" % name,
+                "NX Check-Mate flagged %d object(s) (status %d)." % (nobj, code),
+                metric={"checker": name, "status": code, "object_count": nobj},
+                suggestion="Open Check-Mate (Analysis -> Examine Geometry / Check-Mate) on this "
+                           "checker to locate and fix the flagged %d object(s)." % nobj))
+        lw.WriteLine("checkmate: ran %d checker(s), %d non-passing" % (len(CHECKMATE_CHECKERS), len(out)))
+    except Exception as exc:
+        out.append(_finding("checkmate", "info", "Check-Mate run error",
+                            "Native Check-Mate pass did not complete: %s" % str(exc)[:160],
+                            suggestion="Run Check-Mate interactively to verify availability."))
+    return out
+
+
 def main():
     s = NXOpen.Session.GetSession()
     lw = _lw()
@@ -349,6 +441,8 @@ def main():
         part_name, len(bodies), (" (assembly: %d leaf components)" % len(comps)) if comps else ""))
 
     findings = run_checks(bodies, tags, cfg, lw)
+    if "checkmate" in cfg["checks"]:
+        findings += _checkmate_findings(part, lw)
     sev = {"error": 0, "warning": 0, "info": 0}
     for f in findings:
         sev[f["severity"]] = sev.get(f["severity"], 0) + 1

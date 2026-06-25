@@ -139,6 +139,9 @@ apart from "the model has N errors":
 | `duplicate_body` | warning  | Two bodies with the same volume and a coincident centroid — a likely double-build. |
 | `unnamed_body`   | info     | A body with no display name (hurts FEA/CAM selection and per-part export). |
 | `duplicate_name` | info     | The same display name on multiple bodies (ambiguous selection).      |
+| `checkmate`      | error/warning/info | Runs NX's **native Check-Mate** validator (headless) with a curated set of `%mqc_*` geometry/standard checkers — body validity/consistency, body & face self-intersection, tiny objects, spiky/cut faces, edge tolerance, body structure/boundaries — and reports each non-passing test (severity from the Check-Mate status). Catches modelling-standard / quality defects the geometric checks above can't. Skipped with an info note if the Check-Mate module/license is absent. |
+
+The `checkmate` check is **language-agnostic** (it drives NX's own quality engine) and runs in batch like the rest; exclude it with `--checks interference,tiny_body,…` if you only want the fast geometric checks. See `examples/suspension_checkmate_report.json` for a report that includes a native Check-Mate "Faces - Spikes/Cuts" finding.
 
 Thresholds (CLI flag → report key, with defaults):
 
