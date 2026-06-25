@@ -204,16 +204,19 @@ def side_steps(p: DrivelineParams, tag: str, sign: int) -> List[BuildStep]:
         outer_radius=w.bearing_outer_diameter / 2.0, inner_radius=w.bearing_bore_diameter / 2.0,
         z0=z0, length=w.bearing_width))
 
-    # ABS / wheel-speed encoder ring (thin tube on the bearing's inboard face --
-    # the face toward the differential, where the wheel-speed sensor sits)
+    # ABS / wheel-speed encoder ring -- a thin tube PRESSED ONTO the hub-bearing OD on
+    # the bearing's inboard face (toward the differential, where the wheel-speed sensor
+    # sits). Its BORE = the bearing OD, so it touches the bearing wall as a press fit
+    # (no solid overlap); the wall grows OUTWARD from the bearing OD by encoder_ring_wall.
     if w.abs_encoder_ring and w.encoder_ring_width > 0:
         # inboard face: low-Z end (z0) for the +Z side, high-Z end for the -Z side
         ez0 = bearing_z0 if sign >= 0 else bearing_z0 + w.bearing_width - w.encoder_ring_width
+        r_bearing = w.bearing_outer_diameter / 2.0
         steps.append(BuildStep(
             id="encoder_ring_%s" % tag, role="encoder_ring", kind="tube", boolean="create",
             body_name="ABS_Encoder_Ring_%s" % U, material="encoder", color=COL_BEARING,
-            outer_radius=w.encoder_ring_diameter / 2.0,
-            inner_radius=w.encoder_ring_diameter / 2.0 - 4.0,
+            outer_radius=r_bearing + w.encoder_ring_wall,
+            inner_radius=r_bearing,
             z0=ez0, length=w.encoder_ring_width))
 
     # wheel-mounting flange (the wheel bolts to this face)

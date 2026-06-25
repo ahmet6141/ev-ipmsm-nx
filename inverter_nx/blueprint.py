@@ -229,19 +229,44 @@ def internal_steps(p: InverterParams) -> List[BuildStep]:
         z0=lay.plate_top_z, length=lay.cap_hgt))
 
     # representative laminated DC busbar tying the cap to the module row (a +/- pair of
-    # copper bars standing off above the modules, spanning the module-row length in X).
+    # copper bars standing off above the modules, spanning the cap length in X).
+    #
+    # The bars LAND ON the DC-link cap terminal face, they do NOT bury into the cap: each
+    # bar bolts to a short terminal PAD that is UNITED onto the cap (one solid with it),
+    # and the bar's +Y edge meets that pad's outer face -- a touching mating contact (the
+    # inverter_nx interpenetration fix). The pad overlaps INTO the cap so the unite is
+    # robust (NX lesson: every unite must overlap its target); it stands proud of the cap
+    # -Y face by terminal_pad_proj_mm, and the bar +Y edge stops exactly there.
     if p.busbar.enabled:
         b = p.busbar
         bus_x = lay.cap_len   # span the cap length in X
-        bus_y_mid = (lay.cap_cy - lay.cap_wid / 2.0 + lay.module_y + lay.module_wid / 2.0) / 2.0
-        bus_z = lay.plate_top_z + lay.module_hgt + b.height_mm
+        cy = lay.busbar_cy    # both bars share Y; their +Y edge lands on the pad face
+        bar_pos_y = cy + b.width_mm / 2.0   # the +Y (cap-side) edge of each bar
+        # the two bars stack in Z above the modules; both touch the same pad face in Y.
         for k, name in enumerate(("DC_Busbar_Pos", "DC_Busbar_Neg")):
-            cy = bus_y_mid + (b.width_mm * 0.5 + 1.0) * (1 if k == 0 else -1)
+            z0 = lay.plate_top_z + lay.module_hgt + b.height_mm + k * (b.thickness_mm + 0.5)
             steps.append(BuildStep(
                 id="busbar_%d" % k, role="busbar", kind="extrude", boolean="create",
                 body_name=name, material="copper", color=COL_BUSBAR,
                 profile=_rect_at(0.0, cy, bus_x, b.width_mm),
-                z0=bus_z + k * (b.thickness_mm + 0.5), length=b.thickness_mm))
+                z0=z0, length=b.thickness_mm))
+            # terminal pad united onto the cap at this bar's height: a small block that
+            # OVERLAPS into the cap (robust unite) and stands proud of the cap -Y face so
+            # the bar's +Y edge butts against it. The pad spans the bar thickness in Z and
+            # is centred on X. Its outer (-Y) face sits at bar_pos_y, so the bar touches it.
+            if b.terminal_pad_proj_mm > 0.0:
+                pad_y0 = bar_pos_y                         # pad outer face (the bar lands here)
+                pad_y1 = lay.cap_terminal_face_y + 2.0     # 2 mm INTO the cap -> robust unite
+                pad_cy = (pad_y0 + pad_y1) / 2.0
+                pad_len_y = pad_y1 - pad_y0
+                pad_z0 = z0 - 1.0                          # bracket the bar thickness in Z
+                pad_len_z = b.thickness_mm + 2.0
+                steps.append(BuildStep(
+                    id="busbar_pad_%d" % k, role="busbar", kind="extrude", boolean="unite",
+                    target="dc_link_cap", body_name="%s_Terminal_Pad" % name,
+                    material="copper", color=COL_BUSBAR,
+                    profile=_rect_at(0.0, pad_cy, b.terminal_pad_width_mm, pad_len_y),
+                    z0=pad_z0, length=pad_len_z))
     return steps
 
 

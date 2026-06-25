@@ -155,11 +155,20 @@ class EnclosureParams:
 class BusbarParams:
     """Representative DC-bus + AC-phase busbars (laminated copper) tying the SiC modules
     to the DC-link cap and out to the phase connectors. A first-order packaging BLANK
-    (the cap-to-module link), not a routed conductor model."""
+    (the cap-to-module link), not a routed conductor model.
+
+    The bars LAND on the DC-link cap's -Y terminal face: each bar bolts to a short
+    terminal PAD that is united onto the cap (so it is one solid with the cap), and the
+    bar's +Y edge meets that pad's outer face -- a touching mating contact, never a bar
+    buried inside the cap body (`terminal_pad_proj_mm` is how far the pad stands proud of
+    the cap face; the bar edge stops there)."""
     enabled: bool = True
     thickness_mm: float = 3.0           # copper bar thickness (stacked +/-)
     width_mm: float = 24.0              # bar width (current-carrying cross-section)
     height_mm: float = 8.0              # standoff height above the module tops
+    terminal_pad_proj_mm: float = 3.0   # how far the cap terminal pad stands proud of the
+                                        # cap -Y face (the bar +Y edge lands on it)
+    terminal_pad_width_mm: float = 16.0  # terminal-pad extent in X (centred on the bar)
 
 
 # --------------------------------------------------------------------------- #

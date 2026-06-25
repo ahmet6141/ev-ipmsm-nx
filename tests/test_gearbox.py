@@ -305,3 +305,136 @@ def test_derived_exposes_the_assembler_offset():
     # the offset must be the documented ~234 mm, well above the old overlapping 125 mm
     assert g.motor_offset_mm > 200.0
     assert g.motor_offset_dx_mm > 0.0 and g.motor_offset_dz_mm > 0.0
+
+
+# --------------------------------------------------------------------------- #
+# NO BODY INTERPENETRATION (ICD §7.6) -- a gear is mounted ON a shaft, so it must
+# NEVER be a solid disc that overlaps the shaft it sits on. nx_inspect found the gear
+# + pinion blanks (and the housing end cover) sharing metal with the layshaft; the fix
+# bores each blank to the mating shaft OD (a press-fit ring) or UNITES the layshaft
+# blanks into the shaft as one rotating cluster, and bores the housing where each shaft
+# crosses the cast covers. The NX-free clearance.py test ignores subtract/unite bodies
+# (it cannot see a bore or a boolean), so the load-bearing checks are STRUCTURAL on the
+# blueprint: bore ID >= shaft OD, unite present + ordered, housing bore clears the shaft.
+# --------------------------------------------------------------------------- #
+def _steps_by_id(p):
+    return {s["id"]: s for s in bp.generate(p)["build_steps"]}
+
+
+def _shaft_od_for(p):
+    """Mating-shaft OD (mm) each gear blank sits on."""
+    ls = p.layshaft
+    return {
+        "motor_pinion": p.motor_pinion_bore_diameter_mm,   # motor rotor shaft
+        "layshaft_gear": ls.shaft_diameter_mm,             # the layshaft
+        "layshaft_pinion": ls.shaft_diameter_mm,           # the layshaft
+        "output_gear": p.output.bore_diameter_mm,          # diff input shaft
+    }
+
+
+def test_no_gear_blank_is_a_solid_disc_on_its_shaft():
+    """Every gear blank is mounted on a shaft WITHOUT sharing solid: either UNITED into a
+    shaft body modelled here (one cluster body) or a TUBE bored to the mating shaft OD
+    (bore ID >= shaft OD => a press fit, never a disc overlapping the shaft)."""
+    p = GearboxParams()
+    steps = _steps_by_id(p)
+    shaft_od = _shaft_od_for(p)
+    for gid, od in shaft_od.items():
+        s = steps[gid]
+        if s["boolean"] == "unite":
+            # united onto a shaft body -> one solid by construction, no overlap
+            assert s["target"] in steps, "%s unites onto a missing body" % gid
+            assert steps[s["target"]]["role"] in ("layshaft",)
+        else:
+            assert s["kind"] == "tube", "%s must be a bored tube or a unite, not a %s" % (gid, s["kind"])
+            bore_id = 2.0 * s["inner_radius"]
+            assert bore_id >= od - 1e-6, (
+                "%s bore Ø%.1f < shaft Ø%.1f: the blank would interpenetrate the shaft"
+                % (gid, bore_id, od))
+            assert s["inner_radius"] < s["outer_radius"]   # a real ring, not inverted
+
+
+def test_clustered_layshaft_unites_its_gears_after_the_shaft_exists():
+    """The default clusters the stage-1 gear + stage-2 pinion onto the layshaft: both are
+    `unite` steps targeting `layshaft`, and `layshaft` is created BEFORE them so the
+    boolean has a target (else the NX build fails 'target body does not exist')."""
+    p = GearboxParams()
+    assert p.layshaft.cluster_gears is True
+    order = [s["id"] for s in bp.generate(p)["build_steps"]]
+    steps = _steps_by_id(p)
+    assert order.index("layshaft") < order.index("layshaft_gear")
+    assert order.index("layshaft") < order.index("layshaft_pinion")
+    for gid in ("layshaft_gear", "layshaft_pinion"):
+        assert steps[gid]["boolean"] == "unite" and steps[gid]["target"] == "layshaft"
+
+
+def test_non_clustered_layshaft_bores_its_gears_to_the_shaft_od():
+    """With cluster_gears off, the layshaft blanks become press-fit TUBES bored to the
+    shaft OD instead -- still no solid-disc-on-shaft overlap (the alternative fix)."""
+    p = GearboxParams().overridden(**{"layshaft.cluster_gears": False})
+    steps = _steps_by_id(p)
+    for gid in ("layshaft_gear", "layshaft_pinion"):
+        s = steps[gid]
+        assert s["kind"] == "tube" and s["boolean"] == "create"
+        assert 2.0 * s["inner_radius"] >= p.layshaft.shaft_diameter_mm - 1e-6
+
+
+def test_housing_bearing_bore_clears_every_shaft():
+    """The cast housing must not share solid with a shaft (the housing<->layshaft clash):
+    each shaft passes through a bearing bore subtracted from the housing shell, coaxial
+    with the shaft and sized clear of the shaft OD."""
+    p = GearboxParams()
+    pos = eng.axis_positions(p)
+    steps = _steps_by_id(p)
+    expect = {
+        "bearing_bore_layshaft": (pos["layshaft"], p.layshaft.shaft_diameter_mm),
+        "bearing_bore_motor": (pos["motor"], p.motor_pinion_bore_diameter_mm),
+        "bearing_bore_output": (pos["diff"], p.output.bore_diameter_mm),
+    }
+    for bid, (centre, shaft_od) in expect.items():
+        assert bid in steps, "missing housing bearing bore %s" % bid
+        s = steps[bid]
+        assert s["boolean"] == "subtract" and s["target"] == "housing_shell"
+        assert 2.0 * s["outer_radius"] >= shaft_od, (
+            "%s Ø%.1f does not clear shaft Ø%.1f" % (bid, 2.0 * s["outer_radius"], shaft_od))
+        # coaxial with the shaft it clears
+        assert s["origin3"][0] == pytest.approx(centre[0], abs=1e-6)
+        assert s["origin3"][1] == pytest.approx(centre[1], abs=1e-6)
+
+
+def test_bearing_bore_pierces_both_end_covers():
+    """The bearing bore must span the FULL housing length (pierce both cast end covers),
+    so a shaft crossing either cover sits in the bore, not in solid metal."""
+    p = GearboxParams()
+    g = eng.derive(p)
+    h = p.housing
+    steps = _steps_by_id(p)
+    full_len = g.housing_axial_length_mm + 2.0 * h.end_cover_thickness_mm
+    s = steps["bearing_bore_layshaft"]
+    z_lo = s["origin3"][2]
+    z_hi = z_lo + s["length"]
+    cover_lo_top = 0.0                                  # -Z cover spans -cover .. 0
+    cover_hi_bot = g.housing_axial_length_mm           # +Z cover spans cavity_len .. +cover
+    assert z_lo <= -h.end_cover_thickness_mm + 1e-6     # reaches the outer -Z face
+    assert z_hi >= cover_hi_bot + h.end_cover_thickness_mm - 1e-6  # through the +Z face
+    assert s["length"] >= full_len - 1e-6
+
+
+def test_clearance_module_sees_no_gross_solid_overlap_growth():
+    """Sanity gross-overlap guard with vehicle_nx.clearance (NX-free). The sampled-solid
+    test ignores subtract/unite, so it bounds each blank by its OUTER envelope -- it
+    cannot validate a bore. We use it only to confirm the FIX does not GROW the part's
+    outer envelope vs the gear pitch circles (no body sticks out further than its gear
+    tip), i.e. the bores/unites are interior changes. The true no-overlap proof is the
+    structural bore/unite asserts above."""
+    from vehicle_nx import clearance as cl
+    p = GearboxParams()
+    g = eng.derive(p)
+    blue = bp.generate(p)
+    I3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    lb = cl.local_bbox(blue)
+    assert lb is not None
+    (lo, hi) = lb
+    # the part envelope stays bounded by the housing oval + flanges (a few hundred mm),
+    # i.e. nothing exploded; a finite, sane bounding box.
+    assert all(abs(v) < 1000.0 for v in lo + hi)

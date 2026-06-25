@@ -49,6 +49,31 @@ def _fixed_half_chain_mm(p: DrivelineParams) -> float:
             + w.bearing_width + w.hub_flange_thickness)
 
 
+def diff_input_axis_protrusion_mm(p: DrivelineParams) -> float:
+    """How far (mm) the COAXIAL differential-input hub (pinion blank + motor-coupling
+    flange) sticks out PAST the carrier face along the diff/wheel axis.
+
+    With the diff demoted to a true 1:1 differential its input is COAXIAL with the wheel
+    axis (offset 0), so this hub sits ON the half-shaft path. The inboard CV bell must
+    therefore start OUTBOARD of it, or the two solids interpenetrate (the bug FIX 1
+    addresses). The hub's outer face is the ring-gear-face mid-plane + half the ring-gear
+    face + the coupling-flange thickness, measured from the carrier face; this returns
+    that protrusion. Zero when the input is OFFSET (a parallel-axis diff, ratio > 1), as
+    it then no longer sits on the half-shaft axis."""
+    d = p.differential
+    if d.final_drive_ratio > 1.0 + 1e-6:
+        return 0.0   # parallel-axis input: off the half-shaft axis, no axial conflict
+    half = d.carrier_length / 2.0
+    zc = half + d.ring_gear_face_width / 2.0
+    input_face_z = zc + d.ring_gear_face_width / 2.0 + d.input_flange_thickness
+    return max(0.0, input_face_z - half)
+
+
+# minimum axial gap (mm) between the coaxial diff-input flange face and the inboard CV
+# bell -- a real coupling needs a little standoff so the CV plunge does not foul it.
+_INPUT_CV_GAP_MM = 3.0
+
+
 def inboard_clearance(p: DrivelineParams) -> float:
     """Axial gap (mm) placed between the differential carrier face and the inboard
     CV-joint bell so the wheel-hub flange face lands at local z = target_track/2.
@@ -262,6 +287,22 @@ def validate(p: DrivelineParams) -> List[str]:
             "built track %.0f mm is %.1f%% off target %.0f mm (> 2%%): the catalogue "
             "half-chain already exceeds target_track/2 -- shorten halfshaft/bells or "
             "raise target_track_mm" % (g.total_track_length_mm, g.track_error_pct, p.target_track_mm))
+
+    # FIX 1 -- the coaxial differential input must not foul the inboard CV joint. With a
+    # 1:1 diff the input coupling hub sits ON the wheel axis and protrudes past the carrier
+    # face; the inboard CV bell starts at carrier_face + inboard_clearance. If that start
+    # is not OUTBOARD of the input hub (by at least a small standoff), the two solids
+    # interpenetrate. The half-shaft length is sized so the SOLVED clearance clears it;
+    # this guards against a future param change re-introducing the overlap.
+    protrusion = diff_input_axis_protrusion_mm(p)
+    if protrusion > 0.0:
+        clr = inboard_clearance(p)
+        if clr < protrusion + _INPUT_CV_GAP_MM:
+            issues.append(
+                "inboard CV bell starts %.0f mm from the carrier face but the coaxial diff "
+                "input flange protrudes %.0f mm along the axis: they interpenetrate -- "
+                "lengthen the inboard clearance (shorten halfshaft.length) or shrink the "
+                "input flange" % (clr, protrusion))
 
     # engineering margins (warnings, not hard stops, but reported). Half-shafts are
     # fatigue-critical, so this static screen carries a >= 1.5 target (not just > yield);

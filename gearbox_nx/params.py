@@ -65,6 +65,13 @@ class LayshaftParams:
     bearing_seat_length_mm: float = 20.0
     # axial gap between the stage-1 gear face and the stage-2 pinion face on the shaft
     inter_gear_gap_mm: float = 8.0
+    # The layshaft carries the stage-1 GEAR + the stage-2 PINION keyed/pressed onto it: a
+    # gear blank and the shaft it sits on are TWO solids that would interpenetrate if both
+    # were modelled as overlapping discs (ICD §7.6 forbids it). cluster_gears UNITES the
+    # two layshaft-mounted blanks INTO the shaft as one rotating cluster body (they turn
+    # together) -- the physically-correct, overlap-free representation. Set False to bore
+    # each blank to the shaft OD (a separate press-fit ring) instead.
+    cluster_gears: bool = True
 
 
 @dataclass
@@ -82,6 +89,11 @@ class HousingParams:
     axial_length_mm: float = 96.0        # gear-axis length of the housing cavity (>= widest gear face)
     end_cover_thickness_mm: float = 12.0 # bolted end-cover plate thickness at each axial end
     radial_clearance_mm: float = 12.0    # min radial gap from a gear tip to the inner wall (oil + tolerance)
+    # Each shaft passes THROUGH the cast end covers via a bearing bore: a clearance hole
+    # subtracted where the shaft crosses the cover wall, so the shaft sits in the bore and
+    # never shares solid with the housing (ICD §7.6). Radial clearance added to the shaft
+    # radius for that bore (the bearing-seat / oil-seal register stand-off).
+    bearing_bore_clearance_mm: float = 3.0
 
     # --- motor-mounting flange (matches the motor DE housing flange) -------- #
     # 0.0 => AUTO: take the value from motor_nx (motor DE flange OD, mount PCD, mount
@@ -148,6 +160,10 @@ class GearboxParams:
     layshaft_collinear: bool = True
     motor_dir_angle_deg: float = 48.5     # direction of the motor axis from the diff axis in
     #                                       local XY (~atan2(dz,dx) for dx~155, dz~175 -> clears)
+    # The motor pinion is keyed/pressed onto the MOTOR ROTOR SHAFT (from motor_nx, Ø45),
+    # so its blank is a TUBE bored to that shaft OD -- a press-fit ring, not a solid disc
+    # that would interpenetrate the shaft (ICD §7.6). 0 => solid (no external shaft).
+    motor_pinion_bore_diameter_mm: float = 45.0
     stage1: GearStageParams = field(default_factory=lambda: GearStageParams(
         module_mm=2.5, pinion_teeth=19, gear_teeth=53, face_width_mm=30.0))
     stage2: GearStageParams = field(default_factory=lambda: GearStageParams(
@@ -209,6 +225,7 @@ class GearboxParams:
         out: List[Tuple[str, float, str]] = [
             ("motor_peak_torque_nm", float(self.motor_peak_torque_nm), ""),
             ("motor_dir_angle_deg", float(self.motor_dir_angle_deg), "deg"),
+            ("motor_pinion_bore_diameter_mm", float(self.motor_pinion_bore_diameter_mm), "mm"),
         ]
         for group_name in ("stage1", "stage2", "layshaft", "housing", "output"):
             group = getattr(self, group_name)

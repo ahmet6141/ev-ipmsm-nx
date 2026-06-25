@@ -82,7 +82,16 @@ class HalfshaftParams:
                                         # fatigue-critical, so this >1.5 static margin backstops
                                         # the separate fatigue check.
     bore_diameter: float = 18.0         # hollow-shaft bore (0 => solid)
-    length: float = 520.0               # bar length between the two CV-joint bells
+    length: float = 485.0               # bar length between the two CV-joint bells.
+                                        # Sized so the SOLVED inboard plunge clearance
+                                        # (engineering.inboard_clearance) lands the wheel-hub
+                                        # flange face on T/2 AND is large enough that the
+                                        # inboard CV bell starts OUTBOARD of the coaxial diff
+                                        # input coupling flange (which protrudes ~46 mm past
+                                        # the carrier face on the diff axis) -- so the CV bell
+                                        # and the input flange no longer share the axis (no
+                                        # solid interpenetration). Was 520 when the CV bell
+                                        # started at z=65 and overlapped the input at z<=92.
     spline_diameter: float = 28.0       # stub spline into the wheel hub
 
     inboard_joint: str = "tripod"       # plunging joint (accommodates suspension travel)
@@ -119,8 +128,14 @@ class WheelHubParams:
     lug_hole_diameter: float = 14.0     # M12 stud clearance / press-in stud seat
 
     abs_encoder_ring: bool = True       # magnetic wheel-speed encoder ring on the hub
-    encoder_ring_diameter: float = 70.0
-    encoder_ring_width: float = 6.0
+    # The ABS ring is PRESSED ONTO the hub-bearing OD: it is modelled as a tube whose
+    # BORE = the bearing OD (a touching press fit -- no solid overlap with the bearing)
+    # and whose wall is encoder_ring_wall. encoder_ring_diameter is the ring OD and is
+    # DERIVED as bearing_outer_diameter + 2*encoder_ring_wall in the blueprint, so it can
+    # never invert back inside the bearing wall (the old 70 mm OD sat INSIDE the 84 mm
+    # bearing and interpenetrated it).
+    encoder_ring_wall: float = 4.0      # radial wall of the ring (sits ON the bearing OD)
+    encoder_ring_width: float = 6.0     # axial width of the ring
 
 
 @dataclass

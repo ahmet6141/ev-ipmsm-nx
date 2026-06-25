@@ -83,9 +83,39 @@ def _shrink_hull(poly: List[Tuple[float, float]], wall: float) -> List[Tuple[flo
 # gear blanks (axis-placed cylinders on the three parallel axes)
 # --------------------------------------------------------------------------- #
 def _gear(step_id: str, body_name: str, centre: Tuple[float, float],
-          pitch_diameter: float, z0: float, face_width: float) -> BuildStep:
-    """A gear BLANK: a solid cylinder at pitch diameter, coaxial with +Z through
-    (centre_x, centre_y), spanning z0 .. z0+face_width."""
+          pitch_diameter: float, z0: float, face_width: float,
+          bore_diameter: float = 0.0, *, unite_target: str = None) -> BuildStep:
+    """A gear BLANK at pitch diameter, coaxial with +Z through (centre_x, centre_y),
+    spanning z0 .. z0+face_width. A gear is mounted ON a shaft, so it is NEVER a bare
+    solid disc that overlaps the shaft it sits on (ICD §7.6 forbids two solids sharing
+    metal). Exactly one of:
+
+      * ``unite_target`` set -> the blank is UNITED into a shaft body modelled in THIS
+        part (the layshaft cluster): a solid disc booleaned onto the shaft so the two
+        become one rotating body (they really do turn together). NX uniting two
+        overlapping coaxial cylinders is clean.
+      * ``bore_diameter`` > 0 -> the blank is a TUBE bored to the mating shaft OD (a
+        press-fit ring seated on an EXTERNAL shaft -- the motor rotor shaft, the diff
+        input shaft -- that lives in a neighbouring part). bore = shaft OD => press fit.
+      * neither -> a plain solid disc (only valid when nothing shares its axis)."""
+    if unite_target is not None:
+        # solid disc united onto the shaft cluster (overlap with the shaft is intended
+        # and is consumed by the boolean -- one body results, so no interpenetration).
+        return BuildStep(
+            id=step_id, role="gear", kind="cylinder", boolean="unite",
+            target=unite_target, body_name=body_name, material="gear_steel", color=COL_GEAR,
+            outer_radius=pitch_diameter / 2.0,
+            origin3=(centre[0], centre[1], z0), axis=(0.0, 0.0, 1.0),
+            length=face_width)
+    if bore_diameter and 0.0 < bore_diameter < pitch_diameter:
+        # press-fit ring: an atomic TUBE (outer create - inner subtract inside the engine,
+        # NEVER a self-intersecting annulus profile) bored to the mating shaft OD.
+        return BuildStep(
+            id=step_id, role="gear", kind="tube", boolean="create",
+            body_name=body_name, material="gear_steel", color=COL_GEAR,
+            outer_radius=pitch_diameter / 2.0, inner_radius=bore_diameter / 2.0,
+            origin3=(centre[0], centre[1], z0), axis=(0.0, 0.0, 1.0),
+            length=face_width)
     return BuildStep(
         id=step_id, role="gear", kind="cylinder", boolean="create",
         body_name=body_name, material="gear_steel", color=COL_GEAR,
@@ -96,26 +126,42 @@ def _gear(step_id: str, body_name: str, centre: Tuple[float, float],
 
 def gear_steps(p: GearboxParams, g, pos, bands) -> List[BuildStep]:
     """The four gear blanks of the 2-stage train, on their three axes, in the two
-    axially-separated mesh bands."""
+    axially-separated mesh bands. Each blank is mounted on its shaft WITHOUT sharing
+    solid (ICD §7.6): the two layshaft-mounted blanks (stage-1 gear + stage-2 pinion)
+    are UNITED into the layshaft cluster (``layshaft.cluster_gears``) or bored to the
+    shaft OD; the motor pinion and the output gear are bored to their EXTERNAL mating
+    shaft OD (a press fit). NOTE: the layshaft is created BEFORE these in build_steps()
+    so the unite targets already exist."""
     steps: List[BuildStep] = []
     b1, b2 = bands["stage1"], bands["stage2"]
-    # stage-1 mesh (band 1): motor pinion <-> layshaft gear
+    ls = p.layshaft
+    cluster = "layshaft" if ls.cluster_gears else None
+    # a layshaft-mounted blank that is NOT clustered gets a bore = shaft OD (press fit)
+    lay_bore = 0.0 if ls.cluster_gears else ls.shaft_diameter_mm
+
+    # stage-1 mesh (band 1): motor pinion (on the motor rotor shaft) <-> layshaft gear
     steps.append(_gear("motor_pinion", "Motor_Pinion_Blank", pos["motor"],
-                       g.motor_pinion_pd_mm, b1[0], p.stage1.face_width_mm))
+                       g.motor_pinion_pd_mm, b1[0], p.stage1.face_width_mm,
+                       bore_diameter=p.motor_pinion_bore_diameter_mm))
     steps.append(_gear("layshaft_gear", "Layshaft_Gear_Blank", pos["layshaft"],
-                       g.layshaft_gear_pd_mm, b1[0], p.stage1.face_width_mm))
-    # stage-2 mesh (band 2): layshaft pinion <-> output gear
+                       g.layshaft_gear_pd_mm, b1[0], p.stage1.face_width_mm,
+                       bore_diameter=lay_bore, unite_target=cluster))
+    # stage-2 mesh (band 2): layshaft pinion <-> output gear (on the diff input shaft)
     steps.append(_gear("layshaft_pinion", "Layshaft_Pinion_Blank", pos["layshaft"],
-                       g.layshaft_pinion_pd_mm, b2[0], p.stage2.face_width_mm))
+                       g.layshaft_pinion_pd_mm, b2[0], p.stage2.face_width_mm,
+                       bore_diameter=lay_bore, unite_target=cluster))
     steps.append(_gear("output_gear", "Output_Gear_Blank", pos["diff"],
-                       g.output_gear_pd_mm, b2[0], p.stage2.face_width_mm))
+                       g.output_gear_pd_mm, b2[0], p.stage2.face_width_mm,
+                       bore_diameter=p.output.bore_diameter_mm))
     return steps
 
 
 def layshaft_steps(p: GearboxParams, g, pos, bands) -> List[BuildStep]:
     """The intermediate (counter) shaft carrying the stage-1 gear + stage-2 pinion,
     journalled at both ends. A cylinder coaxial with the layshaft axis spanning a
-    bearing seat below band 1 to a bearing seat above band 2."""
+    bearing seat below band 1 to a bearing seat above band 2. The two layshaft-mounted
+    gear blanks are UNITED onto this body in gear_steps() (cluster) so the rotating
+    group is one solid -- no gear-vs-shaft interpenetration."""
     ls = p.layshaft
     b1, b2 = bands["stage1"], bands["stage2"]
     z_lo = b1[0] - ls.bearing_seat_length_mm
@@ -168,6 +214,31 @@ def housing_steps(p: GearboxParams, g, pos, bands) -> List[BuildStep]:
         target="housing_shell", body_name="Gearbox_Cavity", material="air", color=COL_AIR,
         profile=inner, origin3=(0.0, 0.0, bands["stage1"][0]), axis=(0.0, 0.0, 1.0),
         u_dir=(1.0, 0.0, 0.0), length=cavity_len))
+
+    # 2b) BEARING BORES -- each shaft passes THROUGH the cast end covers via a clearance
+    #     bore, so the shaft sits in the bore and never shares solid with the housing
+    #     (ICD §7.6: the only reported housing<->layshaft clash was the layshaft piercing
+    #     the solid -Z end cover). One clearance hole per shaft axis, subtracted through
+    #     the FULL housing length so it pierces BOTH covers; placed coaxial with the
+    #     shaft. The bore overlaps the cast covers (it cuts real metal), not just air, so
+    #     NX has a target to subtract from. Bore Ø = shaft OD + 2*clearance.
+    bore_z0 = z0 - 0.5
+    bore_len = full_len + 1.0
+    # (axis centre, shaft OD, body label) -- the three parallel shaft axes
+    shaft_axes = [
+        (pos["layshaft"], p.layshaft.shaft_diameter_mm, "Layshaft"),
+        (pos["motor"], p.motor_pinion_bore_diameter_mm, "Motor"),
+        (pos["diff"], p.output.bore_diameter_mm, "Output"),
+    ]
+    for (cx, cy), shaft_od, label in shaft_axes:
+        if shaft_od <= 0.0:
+            continue
+        steps.append(BuildStep(
+            id="bearing_bore_%s" % label.lower(), role="bearing_bore_cut",
+            kind="cylinder", boolean="subtract", target="housing_shell",
+            body_name="%s_Bearing_Bore" % label, material="air", color=COL_AIR,
+            outer_radius=shaft_od / 2.0 + h.bearing_bore_clearance_mm,
+            origin3=(cx, cy, bore_z0), axis=(0.0, 0.0, 1.0), length=bore_len))
 
     # 3) MOTOR-MOUNTING FLANGE -- a disc on the diff-side end cover (z0 face), coaxial
     #    with the MOTOR axis, matched to the motor DE flange. The motor bolts to this.
@@ -296,8 +367,10 @@ def build_steps(p: GearboxParams) -> List[BuildStep]:
     bands = engineering.axial_bands(p)
     steps: List[BuildStep] = []
     steps.extend(housing_steps(p, g, pos, bands))
-    steps.extend(gear_steps(p, g, pos, bands))
+    # the LAYSHAFT is created BEFORE the gear blanks: the two layshaft-mounted blanks are
+    # UNITED into it as one rotating cluster (gear_steps), so the unite target must exist.
     steps.extend(layshaft_steps(p, g, pos, bands))
+    steps.extend(gear_steps(p, g, pos, bands))
     steps.extend(output_coupling_steps(p, g, pos, bands))
     return steps
 

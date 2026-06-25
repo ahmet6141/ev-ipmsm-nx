@@ -86,6 +86,8 @@ class Layout:
     cap_len: float                  # DC-link cap length (X)
     cap_wid: float                  # DC-link cap width  (Y)
     cap_hgt: float                  # DC-link cap height (Z)
+    cap_terminal_face_y: float      # cap -Y face (toward the modules) the busbars land on
+    busbar_cy: float                # busbar centre Y (both bars share it; they stack in Z)
     mounting_face_xyz: Tuple[float, float, float]   # the datum the assembly sits on the motor
 
 
@@ -105,13 +107,26 @@ def layout(p: InverterParams) -> Layout:
     module_xs = [x0 + spacing * i for i in range(N_POWER_MODULES)]
     module_y = MODULE_Y_FRAC * c.coldplate_width_mm
 
+    cap_cy = CAP_Y_FRAC * c.coldplate_width_mm
+    cap_wid = CAP_WID_FRAC * c.coldplate_width_mm
+    # the cap -Y face (toward the module row) is the terminal face the busbars land on.
+    cap_terminal_face_y = cap_cy - cap_wid / 2.0
+    # the laminated busbar pair sits in the gap BETWEEN the module row and the cap, with
+    # each bar's +Y edge meeting the cap terminal pad's outer face (proud of the cap face
+    # by busbar.terminal_pad_proj_mm) -- a TOUCHING contact, never buried in the cap. The
+    # two bars share this Y and stack in Z (see blueprint), so this lands both +Y edges on
+    # the pad face. Falls back to the gap mid-line if the bar would otherwise hit the
+    # modules (degenerate small-cap geometry); validate() flags the real overhang case.
+    busbar_cy = cap_terminal_face_y - p.busbar.terminal_pad_proj_mm - p.busbar.width_mm / 2.0
+
     return Layout(
         floor_z=floor_z, plate_top_z=plate_top_z, inner_l=inner_l, inner_w=inner_w,
         module_xs=module_xs, module_y=module_y,
         module_len=MODULE_LEN_MM, module_wid=MODULE_WID_MM, module_hgt=MODULE_HGT_MM,
-        cap_cx=0.0, cap_cy=CAP_Y_FRAC * c.coldplate_width_mm,
+        cap_cx=0.0, cap_cy=cap_cy,
         cap_len=CAP_LEN_FRAC * c.coldplate_length_mm,
-        cap_wid=CAP_WID_FRAC * c.coldplate_width_mm, cap_hgt=CAP_HGT_MM,
+        cap_wid=cap_wid, cap_hgt=CAP_HGT_MM,
+        cap_terminal_face_y=cap_terminal_face_y, busbar_cy=busbar_cy,
         mounting_face_xyz=(0.0, 0.0, 0.0),
     )
 

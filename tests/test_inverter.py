@@ -283,11 +283,64 @@ def test_busbar_pair_present_above_modules():
     p = InverterParams()
     blue = bp.generate(p)
     lay = eng.layout(p)
-    bars = [s for s in blue["build_steps"] if s["role"] == "busbar"]
+    # the +/- pair are the two CREATE busbar bodies (the terminal pads are unite steps).
+    bars = [s for s in blue["build_steps"] if s["role"] == "busbar" and s["boolean"] == "create"]
     assert len(bars) == 2
     module_top = lay.plate_top_z + lay.module_hgt
     for s in bars:
         assert s["z0"] >= module_top - 1e-6   # standoff above the module tops
+
+
+def test_busbar_lands_on_cap_terminal_face_not_buried():
+    """The fix for the inverter_nx interpenetration ERROR: the busbar +Y edge meets the
+    DC-link cap terminal face (offset by the terminal pad it bolts to) -- it must NOT cross
+    that face into the cap body. The bar also clears the power-module row on its -Y side."""
+    p = InverterParams()
+    lay = eng.layout(p)
+    b = p.busbar
+    bars = [s for s in bp.generate(p)["build_steps"]
+            if s["role"] == "busbar" and s["boolean"] == "create"]
+    pad_face_y = lay.cap_terminal_face_y - b.terminal_pad_proj_mm   # outer face of the pad
+    module_edge_y = lay.module_y + lay.module_wid / 2.0
+    for s in bars:
+        ys = [pt[1] for pt in s["profile"]]
+        bar_pos_edge, bar_neg_edge = max(ys), min(ys)
+        # +Y edge lands ON the pad face (touching), never past it into the cap body
+        assert bar_pos_edge <= lay.cap_terminal_face_y + 1e-6, (
+            "%s +Y edge %.2f buries past the cap face %.2f" % (s["id"], bar_pos_edge, lay.cap_terminal_face_y))
+        assert bar_pos_edge == pytest.approx(pad_face_y)  # meets the pad it bolts to
+        # -Y edge clears the module row (a real gap, not an overlap)
+        assert bar_neg_edge >= module_edge_y - 1e-6, (
+            "%s -Y edge %.2f overlaps the module row %.2f" % (s["id"], bar_neg_edge, module_edge_y))
+
+
+def test_busbar_does_not_interpenetrate_the_cap_solid():
+    """Structural assert via the NX-free clearance engine: NO sampled surface point of a
+    busbar lies inside the DC-link CAP body (the terminal pads are united into the cap and
+    are part of that solid -- the bar may only TOUCH that combined solid's face, never bury
+    in it). This is the exact relationship nx_inspect flagged as the ERROR."""
+    from vehicle_nx import clearance as cl
+    blue = bp.generate(InverterParams())
+    R, o = [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0]
+
+    def solids_named(name):
+        out = []
+        for s in blue["build_steps"]:
+            if s.get("body_name") == name:
+                wb = cl._world_body(s, R, o)
+                if wb is not None:
+                    out.append(wb)
+        return out
+
+    cap_only = solids_named("DC_Link_Capacitor")
+    assert cap_only, "expected a DC_Link_Capacitor body"
+    for bar in ("DC_Busbar_Pos", "DC_Busbar_Neg"):
+        bar_solids = solids_named(bar)
+        assert bar_solids, "expected a %s body" % bar
+        # the bar must NOT bury into the cap body (a touch at the face is fine, but the
+        # bar's broad side must never cross the cap face -> no point inside the cap solid).
+        clash = cl.solids_interpenetrate(bar_solids, cap_only)
+        assert clash is None, "%s interpenetrates the DC-link cap (depth %s)" % (bar, clash)
 
 
 def test_lv_connector_present_and_separated_from_hv():
