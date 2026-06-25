@@ -4,6 +4,7 @@ blueprint's structural integrity + the ICD §7.4.2 mating ties (pads on the chas
 pads, pickup bosses on the suspension inboard hardpoints, tower at the damper top)."""
 
 import json
+import math
 
 import pytest
 
@@ -190,6 +191,165 @@ def test_eaxle_mounts_can_be_disabled():
 
 
 # --------------------------------------------------------------------------- #
+# ONE WELDED CRADLE -- no solid interpenetration by construction (the redesign)
+# --------------------------------------------------------------------------- #
+def test_cradle_is_one_united_body():
+    """The whole cradle must be ONE welded body: exactly ONE create step (the spine), and
+    every other structural member is a unite onto it / every hole a subtract from it. Two
+    overlapping create bodies were the 22 NX interpenetrations the redesign removed, so a
+    second create would be a regression. Built for both axles."""
+    for axle in ("rear", "front"):
+        blue = bp.generate(SubframeParams().overridden(axle=axle))
+        creates = [s for s in blue["build_steps"] if s["boolean"] == "create"]
+        assert len(creates) == 1, "%s cradle has %d create bodies (want 1 welded body)" % (
+            axle, len(creates))
+        assert creates[0]["id"] == bp.CRADLE
+        # every unite/subtract targets the one cradle body
+        for s in blue["build_steps"]:
+            if s["boolean"] in ("unite", "subtract"):
+                assert s["target"] == bp.CRADLE, "%s targets %s, not the one cradle body" % (
+                    s["id"], s["target"])
+
+
+# --- oriented-solid VOLUME overlap (NX-merge semantics), NX-free + numpy-free -------- #
+# NX merges a unite ONLY when the tool shares real VOLUME with a body already connected to
+# the single create body. Surface-point sampling both misses and over-reports (a thin slab
+# crossing a thick beam has its sampled corners OUTSIDE the beam yet a real volume overlap),
+# which is exactly how the first build left disconnected toe-pickup fragments. So these
+# helpers test true VOLUMETRIC overlap by sampling each body's INTERIOR and asking whether a
+# point lies inside the other oriented primitive (a box prism or a cylinder), both ways.
+def _norm3(v):
+    n = math.sqrt(sum(c * c for c in v)) or 1.0
+    return [c / n for c in v]
+
+
+def _cross(a, b):
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
+def _prim(step):
+    """An oriented solid primitive (cylinder/box-prism) with `contains(pt)->bool` and
+    `interior()-> list of interior points`, for a create/unite body."""
+    kind = step["kind"]
+    if kind in ("cylinder", "tube"):
+        o = list(step["origin3"]); ax = _norm3(step["axis"])
+        L = float(step["length"]); r = float(step["outer_radius"])
+        helper = [0, 0, 1.0] if abs(ax[2]) < 0.9 else [1.0, 0, 0]
+        u = _norm3(_cross(ax, helper)); v = _cross(ax, u)
+
+        def contains(p):
+            rel = [p[i] - o[i] for i in range(3)]
+            t = sum(rel[i] * ax[i] for i in range(3))
+            if t < 0 or t > L:
+                return False
+            rad = [rel[i] - t * ax[i] for i in range(3)]
+            return math.sqrt(sum(c * c for c in rad)) <= r
+
+        def interior():
+            pts = []
+            # include stations NEAR BOTH ENDS (0.02, 0.98): perimeter members overlap at
+            # the corners, i.e. at a member's extreme ends -- sampling only the middle
+            # would miss a real corner merge (a sampling artefact, not a real disconnect).
+            for tt in (0.02, 0.1, 0.3, 0.5, 0.7, 0.9, 0.98):
+                c = [o[i] + tt * L * ax[i] for i in range(3)]
+                pts.append(list(c))
+                for rr in (0.4 * r, 0.8 * r):
+                    for k in range(8):
+                        a = 2 * math.pi * k / 8
+                        d = [math.cos(a) * u[i] + math.sin(a) * v[i] for i in range(3)]
+                        pts.append([c[i] + rr * d[i] for i in range(3)])
+            return pts
+        return contains, interior
+    if kind == "prism":
+        from motor_nx.blueprint import prism_frame
+        o = list(step["origin3"])
+        u, v, w = prism_frame(tuple(step["axis"]), tuple(step.get("u_dir", (1, 0, 0))))
+        L = float(step["length"])
+        poly = [(float(a), float(b)) for a, b in step["profile"]]
+
+        def _in_poly(x, y):
+            inside = False
+            n = len(poly); j = n - 1
+            for i in range(n):
+                xi, yi = poly[i]; xj, yj = poly[j]
+                if (yi > y) != (yj > y):
+                    xint = (xj - xi) * (y - yi) / (yj - yi) + xi
+                    if x < xint:
+                        inside = not inside
+                j = i
+            return inside
+
+        def contains(p):
+            rel = [p[i] - o[i] for i in range(3)]
+            t = sum(rel[i] * w[i] for i in range(3))
+            if t < 0 or t > L:
+                return False
+            return _in_poly(sum(rel[i] * u[i] for i in range(3)),
+                            sum(rel[i] * v[i] for i in range(3)))
+
+        def interior():
+            us = [q[0] for q in poly]; vs = [q[1] for q in poly]
+            umin, umax, vmin, vmax = min(us), max(us), min(vs), max(vs)
+            pts = []
+            # stations near both ends (0.02, 0.98) too -- a beam overlaps its neighbour at
+            # the corner (its extreme end), so middle-only sampling would miss a real merge.
+            fr = (0.1, 0.25, 0.4, 0.55, 0.7, 0.85)
+            for tt in (0.02, 0.15, 0.35, 0.5, 0.65, 0.85, 0.98):
+                base = [o[i] + tt * L * w[i] for i in range(3)]
+                for a in (umin + (umax - umin) * f for f in fr):
+                    for b in (vmin + (vmax - vmin) * f for f in fr):
+                        if _in_poly(a, b):
+                            pts.append([base[i] + a * u[i] + b * v[i] for i in range(3)])
+            return pts
+        return contains, interior
+    return None
+
+
+def _vol_overlap(pa, pb):
+    """True iff the two oriented solids share VOLUME (an interior point of one lies inside
+    the other -- tested both ways so a thin body crossing a thick one is caught)."""
+    ca, ia = pa; cb, ib = pb
+    if any(cb(p) for p in ia()):
+        return True
+    if any(ca(p) for p in ib()):
+        return True
+    return False
+
+
+def test_cradle_is_one_connected_component_in_nx():
+    """UNION-FIND connectivity that mimics the REAL NX merge: NX keeps a unite as a SEPARATE
+    body unless the tool shares VOLUME with a body ALREADY connected to the single create
+    body (in build order). Replaying that, EVERY unite body must end up in the create's
+    component -> NX yields exactly ONE solid (the headline acceptance: one body, built and
+    inspected in NX). The first build failed this on the toe-pickup ear fragments (NX
+    returned 3 bodies, 2 interpenetrating); this locks the fix in. Both axles."""
+    for axle in ("rear", "front"):
+        blue = bp.generate(SubframeParams().overridden(axle=axle))
+        nodes = []          # [id, prim, connected?]
+        for s in blue["build_steps"]:
+            if s["boolean"] in ("create", "unite"):
+                pr = _prim(s)
+                if pr is None:
+                    continue
+                nodes.append([s["id"], pr, s["boolean"] == "create"])
+        assert nodes and nodes[0][2], "%s: first weld body must be the create" % axle
+        # replay in build order: a unite body joins the create's component iff it
+        # volumetrically overlaps a body ALREADY connected (earlier in the order).
+        for i in range(len(nodes)):
+            if nodes[i][2]:
+                continue
+            for j in range(i):
+                if nodes[j][2] and _vol_overlap(nodes[i][1], nodes[j][1]):
+                    nodes[i][2] = True
+                    break
+        disconnected = [n[0] for n in nodes if not n[2]]
+        assert not disconnected, (
+            "%s cradle is NOT one connected solid -- NX would leave %d separate body(ies): "
+            "%s. Extend the ear/bracket so it overlaps a CONNECTED perimeter body when "
+            "united." % (axle, len(disconnected), disconnected[:6]))
+
+
+# --------------------------------------------------------------------------- #
 # ICD §7.4.2 mating ties -- read straight off the built geometry (world coords)
 # --------------------------------------------------------------------------- #
 def _create(blue, sid):
@@ -216,14 +376,19 @@ def _cyl_centre(step):
 
 def test_pickup_bosses_land_on_the_hardpoints():
     """Every pickup boss centre must sit on its suspension inboard hardpoint
-    (ICD §7.4.2: the suspension arm inboard end bolts here -- no floating arm)."""
+    (ICD §7.4.2: the suspension arm inboard end bolts here -- no floating arm).
+
+    The boss now UNITES onto the one welded cradle body (it is no longer a standalone
+    create -- that would re-introduce the interference the redesign removed), so the boss
+    placement is read off its unite step regardless of boolean. The pin-bore centre stays
+    EXACTLY at the hardpoint, so check_corners.py / subframe_point_world are unaffected."""
     p = SubframeParams()
     blue = bp.generate(p)
     for side in ("l", "r"):
         hp = p.hardpoints_local(side)
         for nm in ("lower_pickup_fore", "lower_pickup_aft", "upper_pickup_fore",
                    "upper_pickup_aft", "toe_pickup"):
-            c = _cyl_centre(_create(blue, "pickup_boss_%s_%s" % (nm, side)))
+            c = _cyl_centre(_step(blue, "pickup_boss_%s_%s" % (nm, side)))
             assert c == pytest.approx(hp[nm], abs=1e-6), "boss %s_%s off hardpoint" % (nm, side)
 
 
