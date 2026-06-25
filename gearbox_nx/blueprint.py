@@ -14,11 +14,15 @@ Coordinate convention (ICD §7.1)
     stage-2 (layshaft pinion <-> output gear) in band 2.
 
 Modelling abstraction
-    Gears are BLANKS at pitch diameter (teeth cut later by hobbing) -- the same
-    "envelope" philosophy motor_nx uses for end-windings and driveline_nx uses for its
-    gears. The production INTERFACES are modelled exactly: the motor-mounting flange
-    (matched to the motor DE flange from motor_nx), the differential-carrier mount, and
-    the output coupling (matched to the driveline diff input flange).
+    Gears are REAL HELICAL involute gears: the closed involute outline (gear_profile) is
+    LOFTED with a helix twist (kind="loft_twist") from the bottom face to the top face, so
+    the section rotates linearly along the face -- a true helical lead, NOT a spur stand-in
+    and no longer a smooth pitch-diameter blank. Meshing pairs are TIMED (tooth-in-gap at
+    the line of centres, applied as the bottom-section phase) and use OPPOSITE helix hand
+    (opposite twist sign); the rating uses the helix (Z_beta / Y_beta / axial force). The
+    production INTERFACES are modelled exactly: the motor-mounting flange (matched to the
+    motor DE flange from motor_nx), the differential-carrier mount, and the output coupling
+    (matched to the driveline diff input flange).
 
     The cast housing is a representative SHELL: an outer cast wall whose footprint is
     the convex hull (a stadium/oval) of the three gear envelopes, extruded along the
@@ -84,17 +88,28 @@ def _shrink_hull(poly: List[Tuple[float, float]], wall: float) -> List[Tuple[flo
 
 
 # --------------------------------------------------------------------------- #
-# REAL involute gears (toothed outline extruded on each parallel axis)
+# REAL HELICAL involute gears (toothed outline LOFTED with a helix twist)
+#
+# Each gear is a TRUE helical solid (kind="loft_twist"): the LOCAL involute outline is
+# lofted from the bottom face (rotated by the mesh-PHASE = start_twist_deg) to the top face
+# (rotated by phase + twist_deg, the helix lead), so the section rotates linearly along the
+# face. NX's ThroughCurvesBuilder has NO inline boolean, so the gear is ALWAYS a standalone
+# create; the bore is a SEPARATE cylinder subtract (a normal subtract works on a loft body).
+# A gear is mounted on a shaft WITHOUT sharing solid (ICD §7.6):
+#   * hub exists (bore r < root r) -> create + central BORE = mating shaft OD (a touching
+#     PRESS FIT) + a DIN 6885 keyway: the layshaft gears (pressed on the layshaft) and the
+#     output gear (pressed on the diff input shaft). No cluster-unite (loft_twist can't unite).
+#   * NO hub (bore r >= root r) -> a SOLID integral pinion (no bore): the motor pinion cut on
+#     the rotor-shaft tip (boring Ø45 through its Ø41 root would leave no hub).
 # --------------------------------------------------------------------------- #
-def _placed_outline(centre: Tuple[float, float], module_mm: float, teeth: int,
-                    pressure_angle_deg: float, profile_shift: float,
-                    rotate_deg: float) -> List[Tuple[float, float]]:
-    """The closed involute tooth outline (a single simple loop), PHASED by ``rotate_deg``
-    about its own axis and TRANSLATED to the gear's axis (centre). Used as the prism
-    profile (a 2D u,v polygon swept along +Z)."""
-    out = gear_outline(module_mm, teeth, pressure_angle_deg=pressure_angle_deg,
-                       profile_shift=profile_shift, flank_pts=_FLANK_PTS, rotate_deg=rotate_deg)
-    return [(x + centre[0], y + centre[1]) for (x, y) in out]
+def _local_outline(module_mm: float, teeth: int, pressure_angle_deg: float,
+                   profile_shift: float) -> List[Tuple[float, float]]:
+    """The closed involute tooth outline (a single simple loop) in LOCAL (u, v) coords
+    centred on the gear's own axis (NOT translated). loft_twist rotates the section about
+    this local origin, so the profile MUST be centred here (the gear's world position comes
+    from origin3); the mesh PHASE is applied as start_twist_deg, the helix as twist_deg."""
+    return gear_outline(module_mm, teeth, pressure_angle_deg=pressure_angle_deg,
+                        profile_shift=profile_shift, flank_pts=_FLANK_PTS)
 
 
 def _bore_keyway(target: str, step_id: str, body_name: str, centre: Tuple[float, float],
@@ -102,8 +117,9 @@ def _bore_keyway(target: str, step_id: str, body_name: str, centre: Tuple[float,
                  z0: float, length: float, color) -> BuildStep:
     """DIN 6885-A parallel keyway cut into a press-fit BORE wall: a slot that opens at the
     bore (r = bore_radius) and reaches key_depth radially OUTWARD into the hub, centred on
-    +X of the gear axis (a representative single key). Extruded through the gear face so
-    the cut is clean. Mirrors motor_nx's shaft keyway (a radial rectangle subtract)."""
+    +X of the gear axis (a representative single key). A STRAIGHT axial slot (the bore is
+    straight even though the teeth are helical), extruded through the face so the cut is
+    clean. Mirrors motor_nx's shaft keyway (a radial rectangle subtract)."""
     hw = key_width / 2.0
     r_in = bore_radius - 0.5                         # start just inside the bore for a clean cut
     r_out = bore_radius + key_depth
@@ -116,48 +132,26 @@ def _bore_keyway(target: str, step_id: str, body_name: str, centre: Tuple[float,
         length=length + 1.0)
 
 
-def _toothed_gear(step_id: str, body_name: str, centre: Tuple[float, float],
+def _helical_gear(step_id: str, body_name: str, centre: Tuple[float, float],
                   module_mm: float, teeth: int, pressure_angle_deg: float,
-                  profile_shift: float, rotate_deg: float, z0: float, face_width: float,
-                  *, unite_target: str = None, bore_diameter: float = 0.0,
+                  profile_shift: float, phase_deg: float, twist_deg: float,
+                  z0: float, face_width: float,
+                  *, bore_diameter: float = 0.0,
                   key_width: float = 0.0, key_depth: float = 0.0) -> List[BuildStep]:
-    """A REAL involute toothed gear (no longer a smooth pitch-diameter blank): the closed
-    tooth outline is extruded (kind="prism") along +Z spanning z0 .. z0+face_width, PHASED
-    by ``rotate_deg`` so it meshes cleanly with its mate. A gear is mounted ON a shaft, so
-    it NEVER shares solid with it (ICD §7.6):
-
-      * ``unite_target`` set -> the toothed solid is UNITED onto a shaft body modelled here
-        (the layshaft cluster) so the rotating group is one body (the layshaft gears).
-      * else, hub exists (bore radius < root radius) -> the toothed solid is CREATEd, then a
-        central BORE (= mating shaft OD, a press fit) and a DIN 6885 KEYWAY (the torque
-        connection) are SUBTRACTed (the output gear pressed on the diff input shaft).
-      * else, NO hub (bore radius >= root radius) -> the gear is too small to bore: it is
-        machined INTEGRAL with its shaft (a pinion cut on the rotor-shaft tip). It is built
-        as a SOLID toothed pinion (no bore, no keyway -- there is nothing to press it onto in
-        THIS part; the rotor shaft lives in motor_nx). This is the motor pinion (Ø45 shaft >
-        Ø41 root): boring it would slice through the tooth roots and leave no hub, which is
-        exactly the "tool body completely outside target" the keyway hit."""
-    profile = _placed_outline(centre, module_mm, teeth, pressure_angle_deg,
-                              profile_shift, rotate_deg)
-    steps: List[BuildStep] = []
-    if unite_target is not None:
-        steps.append(BuildStep(
-            id=step_id, role="gear", kind="prism", boolean="unite", target=unite_target,
-            body_name=body_name, material="gear_steel", color=COL_GEAR, profile=profile,
-            origin3=(0.0, 0.0, z0), axis=(0.0, 0.0, 1.0), u_dir=(1.0, 0.0, 0.0),
-            length=face_width))
-        return steps
-    # external-shaft gear: create the toothed solid, then bore + keyway it to the shaft.
-    steps.append(BuildStep(
-        id=step_id, role="gear", kind="prism", boolean="create",
+    """One TRUE helical gear: a loft_twist of the local involute outline from z0 (rotated by
+    the mesh phase) to z0+face_width (rotated by phase + twist_deg). Always a standalone
+    CREATE (loft has no inline boolean); then a separate bore + keyway subtract for the
+    press fit, unless the gear has no hub (integral solid pinion)."""
+    profile = _local_outline(module_mm, teeth, pressure_angle_deg, profile_shift)
+    steps: List[BuildStep] = [BuildStep(
+        id=step_id, role="gear", kind="loft_twist", boolean="create",
         body_name=body_name, material="gear_steel", color=COL_GEAR, profile=profile,
-        origin3=(0.0, 0.0, z0), axis=(0.0, 0.0, 1.0), u_dir=(1.0, 0.0, 0.0),
-        length=face_width))
+        origin3=(centre[0], centre[1], z0), axis=(0.0, 0.0, 1.0), u_dir=(1.0, 0.0, 0.0),
+        length=face_width, start_twist_deg=phase_deg, twist_deg=twist_deg)]
     root_r = gear_metrics(module_mm, teeth, pressure_angle_deg,
                           profile_shift=profile_shift)["root_radius"]
-    # only bore + key a gear that HAS a hub (the bore must stay inside the tooth roots so a
-    # solid annular hub remains for the keyway to cut). A bore at/above the root would leave
-    # no hub -> the gear is integral with its shaft (solid pinion), no bore / keyway.
+    # bore + key only a gear that HAS a hub (bore inside the tooth roots so an annular hub
+    # remains). A bore at/above the root leaves no hub -> integral solid pinion (no bore).
     has_hub = bore_diameter and bore_diameter > 0.0 and (bore_diameter / 2.0) < root_r - 1e-6
     if has_hub:
         steps.append(BuildStep(
@@ -174,42 +168,41 @@ def _toothed_gear(step_id: str, body_name: str, centre: Tuple[float, float],
 
 
 def gear_steps(p: GearboxParams, g, pos, bands) -> List[BuildStep]:
-    """The four REAL toothed gears of the 2-stage train, on their three axes, in the two
-    axially-separated mesh bands, PHASED so each mesh interlocks (engineering.mesh_phasing).
-    Each gear is mounted on its shaft WITHOUT sharing solid (ICD §7.6): the two layshaft-
-    mounted gears (stage-1 gear + stage-2 pinion) are UNITED into the layshaft cluster
-    (``layshaft.cluster_gears``); the motor pinion and the output gear are CREATEd then
-    bored + keyed to their EXTERNAL mating shaft (a press fit). NOTE: the layshaft is
-    created BEFORE these in build_steps() so the unite targets already exist."""
+    """The four REAL HELICAL gears of the 2-stage train, on their three axes, in the two
+    axially-separated mesh bands. Each is a loft_twist (true helix), PHASED so each mesh
+    interlocks (engineering.mesh_phasing applied as the bottom-section rotation), with the
+    helix TWIST (engineering.gear_twists) carrying the phase along the face. Meshing gears
+    have OPPOSITE hand (opposite twist sign). Each gear is mounted on its shaft WITHOUT
+    sharing solid (ICD §7.6): the layshaft gears and the output gear are CREATEd then bored
+    to their mating shaft OD (a touching PRESS FIT -- no cluster-unite, since loft_twist
+    cannot boolean inline); the motor pinion is a solid integral pinion (no bore)."""
     steps: List[BuildStep] = []
     b1, b2 = bands["stage1"], bands["stage2"]
     ls = p.layshaft
-    cluster = "layshaft" if ls.cluster_gears else None
     phase = engineering.mesh_phasing(p)
+    twist = engineering.gear_twists(p)
     s1, s2 = p.stage1, p.stage2
 
-    # stage-1 mesh (band 1): motor pinion (on the motor rotor shaft) <-> layshaft gear
-    steps.extend(_toothed_gear(
+    # stage-1 mesh (band 1): motor pinion (integral on the rotor shaft) <-> layshaft gear
+    steps.extend(_helical_gear(
         "motor_pinion", "Motor_Pinion", pos["motor"], s1.module_mm, s1.pinion_teeth,
-        s1.pressure_angle_deg, s1.pinion_profile_shift, phase["motor_pinion"],
+        s1.pressure_angle_deg, s1.pinion_profile_shift, phase["motor_pinion"], twist["motor_pinion"],
         b1[0], s1.face_width_mm, bore_diameter=p.motor_pinion_bore_diameter_mm,
         key_width=p.motor_pinion_key.width_mm, key_depth=p.motor_pinion_key.depth_mm))
-    steps.extend(_toothed_gear(
+    steps.extend(_helical_gear(
         "layshaft_gear", "Layshaft_Gear", pos["layshaft"], s1.module_mm, s1.gear_teeth,
-        s1.pressure_angle_deg, s1.gear_profile_shift, phase["layshaft_gear"],
-        b1[0], s1.face_width_mm, unite_target=cluster,
-        bore_diameter=0.0 if ls.cluster_gears else ls.shaft_diameter_mm,
-        key_width=ls.shaft_diameter_mm and 10.0, key_depth=ls.shaft_diameter_mm and 3.3))
+        s1.pressure_angle_deg, s1.gear_profile_shift, phase["layshaft_gear"], twist["layshaft_gear"],
+        b1[0], s1.face_width_mm, bore_diameter=ls.shaft_diameter_mm,
+        key_width=10.0, key_depth=3.3))
     # stage-2 mesh (band 2): layshaft pinion <-> output gear (on the diff input shaft)
-    steps.extend(_toothed_gear(
+    steps.extend(_helical_gear(
         "layshaft_pinion", "Layshaft_Pinion", pos["layshaft"], s2.module_mm, s2.pinion_teeth,
-        s2.pressure_angle_deg, s2.pinion_profile_shift, phase["layshaft_pinion"],
-        b2[0], s2.face_width_mm, unite_target=cluster,
-        bore_diameter=0.0 if ls.cluster_gears else ls.shaft_diameter_mm,
-        key_width=ls.shaft_diameter_mm and 10.0, key_depth=ls.shaft_diameter_mm and 3.3))
-    steps.extend(_toothed_gear(
+        s2.pressure_angle_deg, s2.pinion_profile_shift, phase["layshaft_pinion"], twist["layshaft_pinion"],
+        b2[0], s2.face_width_mm, bore_diameter=ls.shaft_diameter_mm,
+        key_width=10.0, key_depth=3.3))
+    steps.extend(_helical_gear(
         "output_gear", "Output_Gear", pos["diff"], s2.module_mm, s2.gear_teeth,
-        s2.pressure_angle_deg, s2.gear_profile_shift, phase["output_gear"],
+        s2.pressure_angle_deg, s2.gear_profile_shift, phase["output_gear"], twist["output_gear"],
         b2[0], s2.face_width_mm, bore_diameter=p.output.bore_diameter_mm,
         key_width=p.output.keyway_width_mm, key_depth=p.output.keyway_depth_mm))
     return steps
@@ -220,8 +213,8 @@ def layshaft_steps(p: GearboxParams, g, pos, bands) -> List[BuildStep]:
     journalled at both ends. The MAIN body (shaft_diameter) spans the gear region; each
     END is turned DOWN to ``bearing_seat_diameter`` over the bearing-seat length so the
     inner race of each layshaft bearing presses onto a real journal (bore = seat OD, no
-    shared solid -- ICD §7.6). The two layshaft-mounted gears are UNITED onto this body in
-    gear_steps() (cluster) so the rotating group is one solid -- no gear-vs-shaft overlap."""
+    shared solid -- ICD §7.6). The two layshaft-mounted helical gears PRESS-FIT onto this
+    body in gear_steps() (bore = shaft OD, touching) -- no gear-vs-shaft overlap."""
     ls = p.layshaft
     b1, b2 = bands["stage1"], bands["stage2"]
     cavity_hi = g.housing_axial_length_mm
@@ -578,8 +571,8 @@ def build_steps(p: GearboxParams) -> List[BuildStep]:
     bands = engineering.axial_bands(p)
     steps: List[BuildStep] = []
     steps.extend(housing_steps(p, g, pos, bands))
-    # the LAYSHAFT is created BEFORE the gear blanks: the two layshaft-mounted blanks are
-    # UNITED into it as one rotating cluster (gear_steps), so the unite target must exist.
+    # the LAYSHAFT is created before the gears; the two layshaft-mounted helical gears
+    # PRESS-FIT onto it (bore = shaft OD, touching -- loft_twist cannot unite inline).
     steps.extend(layshaft_steps(p, g, pos, bands))
     steps.extend(gear_steps(p, g, pos, bands))
     steps.extend(output_coupling_steps(p, g, pos, bands))

@@ -298,6 +298,38 @@ class MotorBuilder:
             curves.append(self.part.Curves.CreateLine(_p3(*pts[i]), _p3(*pts[(i + 1) % n])))
         return curves
 
+    def _loft_twist(self, step, op, target):
+        """Loft (through-curves) the 2D `profile` between origin3 (rotated start_twist_deg)
+        and origin3 + axis*length (rotated start_twist_deg + twist_deg) -> a TRUE twisted
+        solid (helical gear lead). The section rotates linearly along the axis. Honours an
+        inline boolean (create/unite/subtract) when ThroughCurvesBuilder exposes one (it
+        shares the Feature builder's BooleanOperation). Returns (feature, boolean_applied)."""
+        profile = step["profile"]
+        base = self._axis_base(step)
+        axis = step.get("axis", [0.0, 0.0, 1.0])
+        u_dir = step.get("u_dir", [1.0, 0.0, 0.0])
+        length = float(step.get("length", 0.0))
+        twist = float(step.get("twist_deg", 0.0))
+        start = float(step.get("start_twist_deg", 0.0))
+        _, _, w = self._prism_frame(axis, u_dir)          # w = unit axis
+        top = (base[0] + w[0] * length, base[1] + w[1] * length, base[2] + w[2] * length)
+        bot_curves = self._lines_from_profile_3d(self._rotate2d(profile, start), base, axis, u_dir)
+        top_curves = self._lines_from_profile_3d(self._rotate2d(profile, start + twist), top, axis, u_dir)
+        tcb = self.part.Features.CreateThroughCurvesBuilder(NXOpen.Features.Feature.Null)
+        tcb.SectionsList.Append(self._section(bot_curves))
+        tcb.SectionsList.Append(self._section(top_curves))
+        applied = False
+        if op in ("subtract", "unite") and target is not None:
+            try:
+                tcb.BooleanOperation.Type = self._bool_type(op)
+                tcb.BooleanOperation.SetTargetBodies([target])
+                applied = True
+            except Exception:
+                applied = False
+        feat = tcb.CommitFeature()
+        tcb.Destroy()
+        return feat, applied
+
     def _extrude_on_axis(self, curves, base, axis, length, op, target_body):
         """Extrude a closed curve loop along an ARBITRARY axis (not just +Z).
         Mirrors :meth:`_extrude` but with a caller-supplied direction -- the radial
@@ -525,6 +557,20 @@ class MotorBuilder:
                 feat = self._extrude_on_axis(curves, o3, ax, length, op, target)
                 if op == "create":
                     self._register(step["id"], i, self._feature_body(feat))
+
+        elif kind == "loft_twist":
+            # TRUE twisted/helical solid: loft the profile between two ends, the top
+            # rotated by twist_deg about the axis (helical gear lead). Optional inline boolean.
+            feat, applied = self._loft_twist(step, op, target)
+            if op == "create":
+                self.bodies[step["id"]] = self._feature_body(feat)
+                self._name_body(step["id"], 0, self.bodies[step["id"]])
+            elif not applied:
+                # inline boolean unavailable -> the loft body stands alone; flag it so the
+                # caller can switch to a separate boolean step (rather than silently leaking).
+                self.errors.append(
+                    "WARN %s: loft_twist could not apply inline %s; body left standalone"
+                    % (step["id"], op))
 
         elif kind == "cylinder":
             count = int(step.get("pattern_count", 1))

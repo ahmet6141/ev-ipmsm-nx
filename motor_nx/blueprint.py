@@ -11,6 +11,9 @@ NX builder knows how to execute:
     kind="extrude"   -> extrude a closed XY polygon from z0 along +Z by `length`
     kind="prism"     -> extrude a closed (u, v) polygon along an ARBITRARY axis at an
                         arbitrary world origin (beams/plates in true vehicle coords)
+    kind="loft_twist"-> loft a closed (u, v) polygon between two ends, the top rotated by
+                        `twist_deg` about `axis` -> a TRUE twisted/helical solid (helical
+                        gear teeth, augers); one smooth body, optional boolean
     kind="revolve"   -> revolve a closed (r, z) polygon 360 deg about Z
 
 Each step also carries a boolean op (create / subtract / unite), an optional
@@ -101,6 +104,15 @@ class BuildStep:
     # lateral tie bar) instead of the default +Z column at (cx, cy, z0).
     origin3: Optional[Tuple[float, float, float]] = None
     u_dir: Tuple[float, float, float] = (1.0, 0.0, 0.0)
+    # kind="loft_twist": a TRUE twisted/helical solid -- loft (through-curves) the 2D
+    # `profile` from `origin3` (rotated by `start_twist_deg` about `axis`) to
+    # origin3+axis*length (rotated by start_twist_deg + `twist_deg`). One smooth body
+    # whose section rotates linearly along the axis -- a helical gear lead, an auger, a
+    # twisted blade. twist_deg = face_width*tan(helix)/pitch_radius (deg); its SIGN is
+    # the helix hand (meshing helical gears use opposite signs). Honours boolean
+    # create/unite/subtract against `target` like extrude.
+    twist_deg: float = 0.0
+    start_twist_deg: float = 0.0
 
     def as_dict(self) -> Dict[str, Any]:
         d = asdict(self)

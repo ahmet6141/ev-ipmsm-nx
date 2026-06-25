@@ -71,11 +71,11 @@ class LayshaftParams:
     # axial gap between the stage-1 gear face and the stage-2 pinion face on the shaft
     inter_gear_gap_mm: float = 8.0
     # The layshaft carries the stage-1 GEAR + the stage-2 PINION keyed/pressed onto it: a
-    # gear blank and the shaft it sits on are TWO solids that would interpenetrate if both
-    # were modelled as overlapping discs (ICD §7.6 forbids it). cluster_gears UNITES the
-    # two layshaft-mounted blanks INTO the shaft as one rotating cluster body (they turn
-    # together) -- the physically-correct, overlap-free representation. Set False to bore
-    # each blank to the shaft OD (a separate press-fit ring) instead.
+    # gear and the shaft it sits on are TWO solids that must not share metal (ICD §7.6). The
+    # helical gears are TRUE loft_twist solids, which cannot boolean-unite inline (NX's
+    # ThroughCurvesBuilder has no inline boolean), so each layshaft gear is a PRESS-FIT ring
+    # bored to the shaft OD (its bore touches the shaft -- 0 interference) rather than united.
+    # (Retained for JSON back-compat; the gears now always press-fit bore.)
     cluster_gears: bool = True
 
 

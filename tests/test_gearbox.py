@@ -258,13 +258,14 @@ def test_output_and_diff_mount_coaxial_with_diff_axis():
     assert dm["origin3"][0] == pytest.approx(0.0) and dm["origin3"][1] == pytest.approx(0.0)
 
 
-def _gear_profile_radii(s, centre):
-    """Polar radii of a toothed-gear prism profile measured from its own axis (centre)."""
-    return [math.hypot(x - centre[0], y - centre[1]) for (x, y) in s["profile"]]
+def _gear_profile_radii(s):
+    """Polar radii of a helical gear's LOCAL (origin-centred) loft_twist profile, from its
+    own axis. The gear's world position is origin3; the profile is in local (u, v)."""
+    return [math.hypot(x, y) for (x, y) in s["profile"]]
 
 
 def test_gears_lie_inside_the_housing_cavity_axially():
-    """Every toothed gear must sit within the housing cavity axial span (0 .. cavity_len)."""
+    """Every helical gear must sit within the housing cavity axial span (0 .. cavity_len)."""
     p = GearboxParams()
     g = eng.derive(p)
     blue = bp.generate(p)
@@ -275,8 +276,8 @@ def test_gears_lie_inside_the_housing_cavity_axially():
 
 
 def test_gears_fit_radially_inside_the_inner_wall():
-    """Each gear TOOTH TIP must clear the housing inner wall (max profile radius from its
-    own axis, plus its axis distance from the diff origin, < housing inner radius)."""
+    """Each gear TOOTH TIP must clear the housing inner wall (max LOCAL profile radius,
+    plus the gear axis distance from the diff origin, < housing inner radius)."""
     p = GearboxParams()
     g = eng.derive(p)
     pos = eng.axis_positions(p)
@@ -286,7 +287,7 @@ def test_gears_fit_radially_inside_the_inner_wall():
     for s in blue["build_steps"]:
         if s["role"] == "gear":
             centre = axis_of[s["id"]]
-            tip_r = max(_gear_profile_radii(s, centre))
+            tip_r = max(_gear_profile_radii(s))
             reach = math.hypot(centre[0], centre[1]) + tip_r
             assert reach <= g.housing_inner_radius_mm + 1e-6
 
@@ -339,25 +340,21 @@ def _shaft_od_for(p):
 
 
 def test_no_gear_is_a_solid_disc_on_its_shaft():
-    """Every REAL toothed gear is mounted on a shaft WITHOUT sharing solid, one of three
-    physically-correct ways:
-      * UNITED into a shaft body modelled here (the layshaft cluster) -> one body.
-      * a toothed PRISM bored to the mating shaft OD (a press fit; `<gid>_bore` subtract
-        whose ID >= the shaft OD) -- when the gear has a hub (bore radius < root radius).
-      * a SOLID toothed pinion machined integral with its shaft (no bore) -- when the gear
-        is too small to bore (bore radius >= root radius), e.g. the motor pinion on the
-        rotor-shaft tip. Then there is nothing in THIS part for it to overlap."""
+    """Every REAL HELICAL gear (loft_twist) is mounted on a shaft WITHOUT sharing solid,
+    one of two physically-correct ways (loft_twist cannot boolean-unite inline, so the old
+    cluster-unite is gone -- everything is now a press fit or integral):
+      * a helical gear CREATEd then bored to the mating shaft OD (a touching PRESS FIT;
+        `<gid>_bore` subtract whose ID >= the shaft OD) -- when the gear has a hub.
+      * a SOLID integral pinion (no bore) -- when the gear is too small to bore (bore
+        radius >= root radius), e.g. the motor pinion on the rotor-shaft tip."""
     from gearbox_nx.gear_profile import gear_metrics as _gm
     p = GearboxParams()
     steps = _steps_by_id(p)
     shaft_od = _shaft_od_for(p)
     for gid, od in shaft_od.items():
         s = steps[gid]
-        assert s["kind"] == "prism", "%s is a real toothed gear (prism), not %s" % (gid, s["kind"])
-        if s["boolean"] == "unite":
-            assert s["target"] in steps, "%s unites onto a missing body" % gid
-            assert steps[s["target"]]["role"] in ("layshaft",)
-            continue
+        assert s["kind"] == "loft_twist", "%s is a true helical gear, not %s" % (gid, s["kind"])
+        assert s["boolean"] == "create"            # loft_twist is always standalone create
         stage = getattr(p, _GEAR_SPEC[gid][0])
         teeth = getattr(stage, _GEAR_SPEC[gid][1])
         root_r = _gm(stage.module_mm, teeth, stage.pressure_angle_deg)["root_radius"]
@@ -377,28 +374,30 @@ def test_no_gear_is_a_solid_disc_on_its_shaft():
             assert bore_id < 2.0 * root_r          # bore stays inside the hub (root)
 
 
-def test_clustered_layshaft_unites_its_gears_after_the_shaft_exists():
-    """The default clusters the stage-1 gear + stage-2 pinion onto the layshaft: both are
-    `unite` steps targeting `layshaft`, and `layshaft` is created BEFORE them so the
-    boolean has a target (else the NX build fails 'target body does not exist')."""
+def test_layshaft_gears_press_fit_after_the_shaft_exists():
+    """The layshaft gears press-fit onto the layshaft (bore = shaft OD), and the layshaft
+    is CREATEd BEFORE them so the bore subtracts from the gear (not the shaft) and the
+    press fit is well-defined. loft_twist cannot unite inline -- so no cluster-unite."""
     p = GearboxParams()
-    assert p.layshaft.cluster_gears is True
     order = [s["id"] for s in bp.generate(p)["build_steps"]]
     steps = _steps_by_id(p)
     assert order.index("layshaft") < order.index("layshaft_gear")
     assert order.index("layshaft") < order.index("layshaft_pinion")
     for gid in ("layshaft_gear", "layshaft_pinion"):
-        assert steps[gid]["boolean"] == "unite" and steps[gid]["target"] == "layshaft"
+        assert steps[gid]["kind"] == "loft_twist" and steps[gid]["boolean"] == "create"
+        bore = steps["%s_bore" % gid]
+        assert bore["boolean"] == "subtract" and bore["target"] == gid
+        assert 2.0 * bore["outer_radius"] == pytest.approx(p.layshaft.shaft_diameter_mm, abs=1e-6)
 
 
-def test_non_clustered_layshaft_bores_its_gears_to_the_shaft_od():
-    """With cluster_gears off, the layshaft toothed gears become CREATEd prisms bored to
-    the shaft OD instead -- still no solid-disc-on-shaft overlap (the alternative fix)."""
-    p = GearboxParams().overridden(**{"layshaft.cluster_gears": False})
+def test_layshaft_gears_bore_to_the_shaft_od():
+    """The layshaft helical gears are CREATEd loft bodies bored to the shaft OD (press
+    fit) -- no solid-disc-on-shaft overlap."""
+    p = GearboxParams()
     steps = _steps_by_id(p)
     for gid in ("layshaft_gear", "layshaft_pinion"):
         s = steps[gid]
-        assert s["kind"] == "prism" and s["boolean"] == "create"
+        assert s["kind"] == "loft_twist" and s["boolean"] == "create"
         bore = steps["%s_bore" % gid]
         assert bore["boolean"] == "subtract" and bore["target"] == gid
         assert 2.0 * bore["outer_radius"] >= p.layshaft.shaft_diameter_mm - 1e-6
@@ -466,9 +465,9 @@ def test_clearance_module_sees_no_gross_solid_overlap_growth():
 
 
 # --------------------------------------------------------------------------- #
-# REAL INVOLUTE TEETH -- gears are no longer smooth pitch-diameter blanks: each is a
-# toothed prism whose outline lies between the root and tip circle and has exactly z
-# teeth, PHASED so the meshing pair interlocks (no interpenetration).
+# REAL HELICAL INVOLUTE TEETH -- each gear is a TRUE helical loft_twist of the involute
+# outline (LOCAL, origin-centred): a closed loop between root and tip with exactly z teeth,
+# a non-zero helix TWIST, opposite hand per mesh, PHASED so the meshing pair interlocks.
 # --------------------------------------------------------------------------- #
 from gearbox_nx.gear_profile import gear_metrics   # noqa: E402
 
@@ -486,22 +485,34 @@ def _gear_axis(p):
             "layshaft_pinion": pos["layshaft"], "output_gear": pos["diff"]}
 
 
-def test_every_gear_is_a_real_toothed_prism():
-    """Every gear is a closed involute outline extruded as a prism (not a smooth disc)."""
-    blue = bp.generate(GearboxParams())
+def test_every_gear_is_a_true_helical_loft():
+    """Every gear is a TRUE helical solid (kind="loft_twist") of a closed involute outline,
+    with a non-zero helix twist -- not a spur prism and not a smooth disc."""
+    p = GearboxParams()
+    blue = bp.generate(p)
+    twist = eng.gear_twists(p)
     gears = {s["id"]: s for s in blue["build_steps"] if s["role"] == "gear"}
     assert set(gears) == set(_GEAR_SPEC)
-    for s in gears.values():
-        assert s["kind"] == "prism" and s["profile"] is not None
+    for gid, s in gears.items():
+        assert s["kind"] == "loft_twist" and s["profile"] is not None
         assert len(s["profile"]) > 100          # a real toothed loop, not a 4-pt blank
+        assert abs(s["twist_deg"]) > 1.0        # a real helix lead, not spur
+        assert s["twist_deg"] == pytest.approx(twist[gid], abs=1e-6)
+
+
+def test_meshing_gears_have_opposite_helix_hand():
+    """Meshing gears must have OPPOSITE helix hand (opposite twist sign) to mesh: stage-1
+    motor_pinion vs layshaft_gear, stage-2 layshaft_pinion vs output_gear."""
+    twist = eng.gear_twists(GearboxParams())
+    assert twist["motor_pinion"] * twist["layshaft_gear"] < 0
+    assert twist["layshaft_pinion"] * twist["output_gear"] < 0
 
 
 def test_gear_outline_radii_lie_between_root_and_tip():
-    """The toothed outline radii (from the gear's own axis) all fall in [root, tip] -- a
-    genuine involute profile, never inside the root or beyond the tip circle."""
+    """The LOCAL (origin-centred) outline radii all fall in [root, tip] -- a genuine
+    involute profile, never inside the root or beyond the tip circle."""
     p = GearboxParams()
     blue = bp.generate(p)
-    axis = _gear_axis(p)
     for s in blue["build_steps"]:
         if s["role"] != "gear":
             continue
@@ -510,18 +521,16 @@ def test_gear_outline_radii_lie_between_root_and_tip():
         shift = (stage.pinion_profile_shift if "pinion" in _GEAR_SPEC[s["id"]][1]
                  else stage.gear_profile_shift)
         m = gear_metrics(stage.module_mm, teeth, stage.pressure_angle_deg, profile_shift=shift)
-        cx, cy = axis[s["id"]]
-        radii = [math.hypot(x - cx, y - cy) for (x, y) in s["profile"]]
+        radii = [math.hypot(x, y) for (x, y) in s["profile"]]   # profile is LOCAL (origin)
         assert min(radii) >= m["root_radius"] - 1e-6
         assert max(radii) <= m["tip_radius"] + 1e-6
         assert max(radii) == pytest.approx(m["tip_radius"], abs=1e-3)   # teeth reach the tip
 
 
 def test_tooth_count_equals_z():
-    """The outline has exactly z teeth: count the radial peaks at the tip circle."""
+    """The LOCAL outline has exactly z teeth: count the radial peaks at the tip circle."""
     p = GearboxParams()
     blue = bp.generate(p)
-    axis = _gear_axis(p)
     for s in blue["build_steps"]:
         if s["role"] != "gear":
             continue
@@ -530,11 +539,10 @@ def test_tooth_count_equals_z():
         shift = (stage.pinion_profile_shift if "pinion" in _GEAR_SPEC[s["id"]][1]
                  else stage.gear_profile_shift)
         m = gear_metrics(stage.module_mm, teeth, stage.pressure_angle_deg, profile_shift=shift)
-        cx, cy = axis[s["id"]]
         # a vertex is "at the tip" if within 1% of (tip-root) of the tip radius; the tip
         # arcs form `teeth` contiguous runs of such vertices around the gear.
         thr = m["tip_radius"] - 0.01 * (m["tip_radius"] - m["root_radius"])
-        at_tip = [math.hypot(x - cx, y - cy) >= thr for (x, y) in s["profile"]]
+        at_tip = [math.hypot(x, y) >= thr for (x, y) in s["profile"]]
         runs = sum(1 for i in range(len(at_tip))
                    if at_tip[i] and not at_tip[i - 1])      # rising edges (wraps around)
         assert runs == teeth, "%s: counted %d tooth tips, expected z=%d" % (s["id"], runs, teeth)
@@ -549,8 +557,8 @@ def _gear_solids(p, gid):
 
 def test_meshing_pairs_do_not_interpenetrate():
     """The two meshing pairs must be PHASED (tooth-in-gap at the line of centres) so the
-    toothed solids interlock without clashing -- the sampled-solid clearance check (which
-    bounds a prism by its true swept polygon) reports NO interpenetration."""
+    helical solids interlock without clashing -- the sampled-solid clearance check (which
+    bounds a loft_twist body by its true twisting section) reports NO interpenetration."""
     from vehicle_nx import clearance as cl
     p = GearboxParams()
     for a, b in (("motor_pinion", "layshaft_gear"), ("layshaft_pinion", "output_gear")):
@@ -558,34 +566,30 @@ def test_meshing_pairs_do_not_interpenetrate():
         assert clash is None, "%s <-> %s interpenetrate by %s mm (mesh not phased)" % (a, b, clash)
 
 
-def test_unphased_mesh_would_clash_so_the_check_is_real():
-    """Sanity the phasing test has teeth: with the driven gear's phase removed (tooth on
-    tooth instead of tooth-in-gap) the sampled solids DO clash -- so the pass above is the
-    phasing working, not a blind spot in the clearance sampler."""
+def test_mis_set_mesh_would_clash_so_the_check_is_real():
+    """Sanity the helical phasing test has teeth: breaking the driven gear's setup -- either
+    SAME hand (twist sign flipped) or NO phase gap (tooth-on-tooth) -- makes the sampled
+    twisting solids DO clash, so the pass above is the phasing/hand working, not a blind
+    spot in the loft_twist clearance sampler."""
+    import copy
     from vehicle_nx import clearance as cl
-    from gearbox_nx.gear_profile import gear_outline
     p = GearboxParams()
-    pos = eng.axis_positions(p)
-    phase = eng.mesh_phasing(p)
     steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
     I3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 
-    def placed(gid, rotate_deg):
-        s = steps[gid]
-        stage = getattr(p, _GEAR_SPEC[gid][0])
-        teeth = getattr(stage, _GEAR_SPEC[gid][1])
-        cx, cy = _gear_axis(p)[gid]
-        out = gear_outline(stage.module_mm, teeth, stage.pressure_angle_deg,
-                           flank_pts=4, rotate_deg=rotate_deg)
-        prof = [(x + cx, y + cy) for (x, y) in out]
-        bad = dict(s)
-        bad["profile"] = prof
-        return cl.part_solids({"build_steps": [bad]}, I3, [0.0, 0.0, 0.0])
+    def sol(step):
+        return cl.part_solids({"build_steps": [step]}, I3, [0.0, 0.0, 0.0])
 
-    # drive the layshaft_gear with the driver's phase (tooth toward the mate) -> clash
-    drv = _gear_solids(p, "motor_pinion")
-    bad = placed("layshaft_gear", phase["layshaft_gear"] - 180.0 / p.stage1.gear_teeth)
-    assert cl.solids_interpenetrate(drv, bad, touch_tol=0.5) is not None
+    for drv, dvn, z in (("motor_pinion", "layshaft_gear", p.stage1.gear_teeth),
+                        ("layshaft_pinion", "output_gear", p.stage2.gear_teeth)):
+        # (a) SAME hand as the driver -> clash
+        same = copy.deepcopy(steps[dvn])
+        same["twist_deg"] = -same["twist_deg"]
+        assert cl.solids_interpenetrate(sol(steps[drv]), sol(same), touch_tol=0.5) is not None
+        # (b) phase gap removed (tooth-on-tooth) -> clash
+        nogap = copy.deepcopy(steps[dvn])
+        nogap["start_twist_deg"] = nogap["start_twist_deg"] - 180.0 / z
+        assert cl.solids_interpenetrate(sol(steps[drv]), sol(nogap), touch_tol=0.5) is not None
 
 
 # --------------------------------------------------------------------------- #

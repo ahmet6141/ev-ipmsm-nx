@@ -68,6 +68,15 @@ def _norm3(v: Sequence[float]) -> List[float]:
     return [c / n for c in v]
 
 
+def _rotate2d(points, angle_deg: float):
+    """Rotate 2D (u, v) points about the local origin by angle_deg (CCW). Used to place a
+    loft_twist section at its start / top rotation -- the pure-math twin of the NX builder's
+    _rotate2d so the helical solid's envelope can be bounded NX-free."""
+    a = math.radians(angle_deg)
+    c, s = math.cos(a), math.sin(a)
+    return [(x * c - y * s, x * s + y * c) for (x, y) in points]
+
+
 def _perp_frame(w: Sequence[float]) -> Tuple[List[float], List[float]]:
     """Two unit vectors perpendicular to the (already-normalised) axis ``w`` -- the
     radial sampling directions for a cylinder/tube/hole end cap."""
@@ -109,6 +118,23 @@ def step_points(s: Dict[str, Any]) -> List[List[float]]:
         L = s.get("length", 0.0)
         far = [[x + w[0] * L, y + w[1] * L, z + w[2] * L] for (x, y, z) in near]
         return [list(p) for p in near] + far
+
+    if kind == "loft_twist" and s.get("profile") is not None and s.get("origin3") is not None:
+        # a TRUE twisted solid: the LOCAL (u, v) profile, rotated start_twist_deg at the
+        # base section and start_twist_deg + twist_deg at the top, swept along axis. Bound
+        # it by the two end sections (rotation does not change the radial envelope, so the
+        # bbox is the union of the two rotated sections placed at origin3 and origin3+axis*L).
+        prof = [tuple(p) for p in s["profile"]]
+        w = _norm3(s["axis"])
+        L = s.get("length", 0.0)
+        ud = tuple(s.get("u_dir", (1.0, 0.0, 0.0)))
+        o3 = tuple(s["origin3"])
+        top = (o3[0] + w[0] * L, o3[1] + w[1] * L, o3[2] + w[2] * L)
+        start = s.get("start_twist_deg", 0.0)
+        twist = s.get("twist_deg", 0.0)
+        base = profile_to_world(_rotate2d(prof, start), o3, s["axis"], ud)
+        far = profile_to_world(_rotate2d(prof, start + twist), top, s["axis"], ud)
+        return [list(p) for p in base] + [list(p) for p in far]
 
     if kind in ("cylinder", "tube", "hole") and s.get("origin3") is not None:
         base = tuple(s["origin3"])
@@ -315,6 +341,12 @@ def _world_body(s: Dict[str, Any], R: Mat, origin: Vec) -> Optional[Dict[str, An
                           tuple(s["axis"]), tuple(s.get("u_dir", (1.0, 0.0, 0.0))),
                           s.get("length", 0.0), R, origin)
 
+    if kind == "loft_twist" and s.get("profile") is not None and s.get("origin3") is not None:
+        return _twist_body([tuple(pt) for pt in s["profile"]], list(s["origin3"]),
+                           tuple(s["axis"]), tuple(s.get("u_dir", (1.0, 0.0, 0.0))),
+                           s.get("length", 0.0), s.get("start_twist_deg", 0.0),
+                           s.get("twist_deg", 0.0), R, origin)
+
     if kind == "revolve" and s.get("profile") is not None:
         rmax = max((abs(pt[0]) for pt in s["profile"]), default=0.0)
         zs = [pt[1] for pt in s["profile"]]
@@ -353,6 +385,43 @@ def _poly_body(profile_uv, origin3, axis, u_dir, length, R, origin):
             "L": float(length), "poly": poly, "sample": sample}
 
 
+def _twist_body(profile_uv, origin3, axis, u_dir, length, start_deg, twist_deg, R, origin):
+    """A TRUE twisted (loft_twist / helical) solid in vehicle coordinates: the LOCAL (u, v)
+    polygon rotated `start_deg` at the base and `start_deg + twist_deg` at the top, swept
+    along the axis with the section rotating LINEARLY. Stored like a poly body but with the
+    per-station rotation so a point test un-rotates the point's (u, v) by the section angle at
+    its axial parameter before the polygon test. The surface sample is the rotated section
+    ring at several axial stations + both faces (dense enough that a neighbouring gear's
+    teeth fall inside when they truly overlap)."""
+    from motor_nx.blueprint import prism_frame
+    u, v, w = prism_frame(tuple(axis), tuple(u_dir))
+    base = _xform(R, origin, list(origin3))
+    uw = [sum(R[i][k] * u[k] for k in range(3)) for i in range(3)]
+    vw = [sum(R[i][k] * v[k] for k in range(3)) for i in range(3)]
+    ww = _norm3([sum(R[i][k] * w[k] for k in range(3)) for i in range(3)])
+    poly = [(float(a), float(b)) for (a, b) in profile_uv]
+    ring: List[Tuple[float, float]] = []
+    n = len(poly)
+    for i in range(n):
+        ring.append(poly[i])
+        nx = poly[(i + 1) % n]
+        ring.append(((poly[i][0] + nx[0]) / 2.0, (poly[i][1] + nx[1]) / 2.0))
+    # denser axial sampling for a twisting section (the tip helix sweeps tangentially)
+    stations = max(_AXIAL_STATIONS, 13)
+    sample: List[List[float]] = []
+    for si in range(stations):
+        f = si / (stations - 1) if stations > 1 else 0.0
+        t = length * f
+        ang = math.radians(start_deg + twist_deg * f)
+        c, sn = math.cos(ang), math.sin(ang)
+        for (pu, pv) in ring:
+            ru, rv = pu * c - pv * sn, pu * sn + pv * c
+            sample.append([base[i] + ru * uw[i] + rv * vw[i] + t * ww[i] for i in range(3)])
+    return {"type": "twist", "base": base, "u": uw, "v": vw, "w": ww,
+            "L": float(length), "poly": poly, "sample": sample,
+            "start": math.radians(start_deg), "twist": math.radians(twist_deg)}
+
+
 def _dot(a, b):
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
@@ -367,6 +436,19 @@ def _point_in_body(pt, body, tol: float) -> bool:
             return False
         radial = [rel[i] - t * body["axis"][i] for i in range(3)]
         return math.sqrt(_dot(radial, radial)) < body["r"] - tol
+    if body["type"] == "twist":
+        # twisted solid: the section at axial param t is the base polygon rotated by
+        # start + twist*(t/L). Un-rotate the point's (u, v) by that angle, then test the
+        # (un-twisted) base polygon.
+        t = _dot(rel, body["w"])
+        if t < tol or t > body["L"] - tol:
+            return False
+        f = t / body["L"] if body["L"] else 0.0
+        ang = body["start"] + body["twist"] * f
+        pu = _dot(rel, body["u"])
+        pv = _dot(rel, body["v"])
+        c, sn = math.cos(-ang), math.sin(-ang)         # rotate the point BACK by -ang
+        return _point_in_polygon(pu * c - pv * sn, pu * sn + pv * c, body["poly"], tol)
     # poly (prism/extrude)
     t = _dot(rel, body["w"])
     if t < tol or t > body["L"] - tol:

@@ -174,6 +174,28 @@ def mesh_phasing(p: GearboxParams) -> Dict[str, float]:
     }
 
 
+def gear_twists(p: GearboxParams) -> Dict[str, float]:
+    """Per-gear helix TWIST (deg) over the face for the true helical teeth (loft_twist):
+    twist = degrees(face_width * tan(helix_angle) / pitch_radius), SIGNED by the helix HAND.
+    MESHING gears MUST be OPPOSITE hand: stage-1 motor_pinion(+)/layshaft_gear(-), stage-2
+    layshaft_pinion(+)/output_gear(-). (The two layshaft-mounted gears carry independent
+    hands, each serving its own mesh.) Note the meshing pinion and gear twist by DIFFERENT
+    magnitudes -- the small pinion (small pitch radius) twists more -- but share the same
+    helix LEAD (= 2*pi*r/tan(beta)), which is what makes them mesh."""
+    def tw(stage, teeth, sign):
+        pr = stage.module_mm * teeth / 2.0
+        if pr <= 0:
+            return 0.0
+        return sign * math.degrees(stage.face_width_mm
+                                   * math.tan(math.radians(stage.helix_angle_deg)) / pr)
+    return {
+        "motor_pinion": tw(p.stage1, p.stage1.pinion_teeth, +1.0),
+        "layshaft_gear": tw(p.stage1, p.stage1.gear_teeth, -1.0),
+        "layshaft_pinion": tw(p.stage2, p.stage2.pinion_teeth, +1.0),
+        "output_gear": tw(p.stage2, p.stage2.gear_teeth, -1.0),
+    }
+
+
 def axial_bands(p: GearboxParams) -> Dict[str, Tuple[float, float]]:
     """Local-Z (axis-aligned) bands each MESH occupies. An inline layshaft reduction
     separates the two meshes AXIALLY on the layshaft: stage-1 mesh (motor pinion <->
