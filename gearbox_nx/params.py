@@ -51,6 +51,11 @@ class GearStageParams:
     face_width_mm: float = 30.0       # axial gear face width (blank length)
     pressure_angle_deg: float = 20.0  # standard involute pressure angle (info / rating)
     helix_angle_deg: float = 25.0     # helical (quiet EV gear); 0 => spur (info / rating)
+    # profile-shift (addendum-modification) coefficients x. A positive shift on the
+    # pinion avoids undercut on low tooth counts and balances the two centre-distance-
+    # preserving shifts; the built tooth outline + ISO 6336 rating both use them.
+    pinion_profile_shift: float = 0.0
+    gear_profile_shift: float = 0.0
 
 
 @dataclass
@@ -72,6 +77,30 @@ class LayshaftParams:
     # together) -- the physically-correct, overlap-free representation. Set False to bore
     # each blank to the shaft OD (a separate press-fit ring) instead.
     cluster_gears: bool = True
+
+
+@dataclass
+class BearingParams:
+    """One representative rolling bearing seated at a shaft journal, modelled as
+    concentric race rings (ICD §7.6: press fits, no shared solid). The bore seats on
+    the shaft OD (inner-race bore = shaft OD) and the OD seats in the housing bearing
+    bore; a thin rolling-element ring sits between the races. The load ratings drive the
+    ISO 281 L10 life: a deep-groove BALL bearing has exponent p = 3, a tapered/cylindrical
+    ROLLER bearing p = 10/3. Default sizes are catalogue values for the relevant bore.
+
+    `bore_d_mm` / `od_d_mm` / `width_mm` are the boundary dimensions (d, D, B). The
+    rolling-element ring is a representative torus-band of `ball_ring_thickness_mm`
+    centred on the pitch diameter (d+D)/2. `dynamic_load_rating_c_n` is the basic
+    dynamic load rating C (N) from the catalogue; `static_load_rating_c0_n` is C0.
+    """
+    name: str = "6008"                      # catalogue designation (info)
+    kind: str = "ball"                      # "ball" (p=3) or "roller" (p=10/3)
+    bore_d_mm: float = 40.0                 # inner-race bore d = shaft OD (press fit)
+    od_d_mm: float = 68.0                   # outer-race OD D = housing bearing bore
+    width_mm: float = 15.0                  # bearing width B (axial)
+    dynamic_load_rating_c_n: float = 30700.0   # basic dynamic load rating C (N)
+    static_load_rating_c0_n: float = 19000.0   # basic static load rating C0 (N)
+    ball_ring_thickness_mm: float = 6.0     # representative rolling-element ring radial thickness
 
 
 @dataclass
@@ -128,6 +157,18 @@ class OutputCouplingParams:
     bore_diameter_mm: float = 32.0       # = driveline input_bore_diameter (keyed)
     bolt_count: int = 8
     bolt_diameter_mm: float = 9.0        # M8 clearance
+    # output GEAR hub keyway (DIN 6885-A) that keys the toothed gear to the diff input
+    # shaft in its press-fit bore -- the torque connection.
+    keyway_width_mm: float = 10.0        # parallel key width (b) for a ~32 mm bore
+    keyway_depth_mm: float = 3.3         # keyway depth into the BORE wall (t2)
+
+
+@dataclass
+class TorqueShaftKeyParams:
+    """A DIN 6885-A parallel keyway cut into a gear's press-fit BORE (the torque path
+    from an external shaft into the toothed gear hub). Width/depth sized to the bore."""
+    width_mm: float = 12.0               # key width b
+    depth_mm: float = 3.8                # keyway depth into the bore wall (t2)
 
 
 @dataclass
@@ -152,6 +193,15 @@ class GearboxParams:
     name: str = "EV_reduction_gearbox"
     motor_peak_torque_nm: float = 440.0   # from motor_nx em_design (peak); drives gear sizing
     motor_max_speed_rpm: float = 18000.0
+    # ISO 6336 / ISO 281 rating torque: an EV is rated on its CONTINUOUS (thermal) duty,
+    # with peak torque only intermittent. The equivalent continuous torque for a passenger
+    # EV final drive (load-spectrum / Miner-equivalent) is ~a third of peak. The gear
+    # strength + bearing life are screened at motor_peak_torque_nm * this fraction; the
+    # geometry (centre distances, gear sizes) is unchanged.
+    continuous_torque_fraction: float = 0.33
+    # the continuous speed the bearing L10h is integrated at (the duty-equivalent input
+    # speed, well below the 18 000 rpm peak); EV cruise sits far below max rpm.
+    continuous_speed_rpm: float = 9000.0
     # The layshaft sits between the motor and the diff. `layshaft_collinear` places the
     # three axes (diff -> layshaft -> motor) on one line so centre_distance_1 +
     # centre_distance_2 IS exactly the motor<->diff offset (the inline reduction layout
@@ -164,14 +214,30 @@ class GearboxParams:
     # so its blank is a TUBE bored to that shaft OD -- a press-fit ring, not a solid disc
     # that would interpenetrate the shaft (ICD §7.6). 0 => solid (no external shaft).
     motor_pinion_bore_diameter_mm: float = 45.0
+    # DIN 6885 keyway keying the motor pinion to the motor rotor shaft in its bore.
+    motor_pinion_key: TorqueShaftKeyParams = field(default_factory=TorqueShaftKeyParams)
     stage1: GearStageParams = field(default_factory=lambda: GearStageParams(
-        module_mm=2.5, pinion_teeth=19, gear_teeth=53, face_width_mm=30.0))
+        module_mm=2.5, pinion_teeth=19, gear_teeth=53, face_width_mm=32.0))
     stage2: GearStageParams = field(default_factory=lambda: GearStageParams(
-        module_mm=3.5, pinion_teeth=19, gear_teeth=64, face_width_mm=38.0))
+        module_mm=3.5, pinion_teeth=19, gear_teeth=64, face_width_mm=44.0))
     layshaft: LayshaftParams = field(default_factory=LayshaftParams)
     housing: HousingParams = field(default_factory=HousingParams)
     output: OutputCouplingParams = field(default_factory=OutputCouplingParams)
     material: MaterialParams = field(default_factory=MaterialParams)
+    # Rolling bearings at the journalled shafts (ISO 281 life). Each bearing's BORE = the
+    # journal it presses onto (press fit, no shared solid): the LAYSHAFT (the only shaft
+    # fully internal to the gearbox) on its Ø35 bearing seat -- two bearings in the end
+    # covers; the OUTPUT shaft on its Ø32 journal -- one bearing in the +Z cover OUTBOARD of
+    # the output coupling. The layshaft is the highest-loaded, fastest journal, so it runs a
+    # CYLINDRICAL ROLLER bearing (NJ207, p = 10/3) for the L10h life; the output runs a
+    # deep-groove ball. (The motor-pinion shaft has NO gearbox bearing: the pinion is
+    # integral with the motor ROTOR, journalled by the motor's OWN DE/NDE bearings.)
+    layshaft_bearing: BearingParams = field(default_factory=lambda: BearingParams(
+        name="NJ207", kind="roller", bore_d_mm=35.0, od_d_mm=72.0, width_mm=17.0,
+        dynamic_load_rating_c_n=35500.0, static_load_rating_c0_n=29000.0))
+    output_shaft_bearing: BearingParams = field(default_factory=lambda: BearingParams(
+        name="6006", kind="ball", bore_d_mm=32.0, od_d_mm=55.0, width_mm=13.0,
+        dynamic_load_rating_c_n=20300.0, static_load_rating_c0_n=11200.0))
 
     # -- serialisation (identical contract to motor_nx.params) ------------- #
     def to_dict(self) -> Dict[str, Any]:
@@ -227,7 +293,8 @@ class GearboxParams:
             ("motor_dir_angle_deg", float(self.motor_dir_angle_deg), "deg"),
             ("motor_pinion_bore_diameter_mm", float(self.motor_pinion_bore_diameter_mm), "mm"),
         ]
-        for group_name in ("stage1", "stage2", "layshaft", "housing", "output"):
+        for group_name in ("stage1", "stage2", "layshaft", "housing", "output",
+                            "motor_pinion_key", "layshaft_bearing", "output_shaft_bearing"):
             group = getattr(self, group_name)
             for f in fields(group):
                 val = getattr(group, f.name)
@@ -235,8 +302,9 @@ class GearboxParams:
                     continue  # expressions carry numeric dimensions only
                 if f.name.endswith("_deg"):
                     unit = "deg"
-                elif f.name.endswith("_fraction") or f.name.endswith("_teeth"):
-                    unit = ""
+                elif (f.name.endswith("_fraction") or f.name.endswith("_teeth")
+                      or f.name.endswith("_shift") or f.name.endswith("_n")):
+                    unit = ""   # ratio / count / load rating in N (not a length)
                 elif isinstance(val, int):
                     unit = ""   # dimensionless count
                 else:
@@ -252,6 +320,9 @@ _GROUP_TYPES = {
     "housing": HousingParams,
     "output": OutputCouplingParams,
     "material": MaterialParams,
+    "motor_pinion_key": TorqueShaftKeyParams,
+    "layshaft_bearing": BearingParams,
+    "output_shaft_bearing": BearingParams,
 }
 
 

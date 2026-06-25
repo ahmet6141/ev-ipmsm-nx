@@ -138,6 +138,42 @@ def axis_positions(p: GearboxParams) -> Dict[str, Tuple[float, float]]:
     return {"diff": diff, "layshaft": layshaft, "motor": motor}
 
 
+def mesh_phasing(p: GearboxParams) -> Dict[str, float]:
+    """Per-gear rotation (deg, CCW about its own axis) that TIMES the two meshes so a
+    tooth of the driver enters the GAP of the driven at the line of centres -- otherwise
+    the two toothed solids clash (their tip circles overlap by ~2*module by design).
+
+    For each mesh, with both gears' tooth 0 on +X (gear_profile convention):
+      * driver  : rotate so a tooth points at the mate -> rotation = (line-of-centres
+                  direction from the driver toward the mate).
+      * driven  : rotate so a GAP faces the driver -> rotation = (line-of-centres
+                  direction from the driven toward the driver) + a HALF angular pitch
+                  (180/z_driven deg), which swaps a tooth for a gap on that radius.
+
+    Returns the rotation for each of the four gears. Stage-1 mesh: motor_pinion (driver)
+    <-> layshaft_gear (driven). Stage-2 mesh: layshaft_pinion (driver) <-> output_gear
+    (driven). The two layshaft gears are coaxial in disjoint axial bands (they do not
+    mesh with each other), so each takes its own mesh's driver/driven rotation."""
+    pos = axis_positions(p)
+    mx, my = pos["motor"]
+    lx, ly = pos["layshaft"]
+    dx, dy = pos["diff"]
+
+    def loc(a, b):                                   # line-of-centres dir from a toward b
+        return math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+
+    s1_driver = loc(pos["motor"], pos["layshaft"])           # motor pinion tooth -> layshaft
+    s1_driven = loc(pos["layshaft"], pos["motor"]) + 180.0 / p.stage1.gear_teeth
+    s2_driver = loc(pos["layshaft"], pos["diff"])            # layshaft pinion tooth -> diff
+    s2_driven = loc(pos["diff"], pos["layshaft"]) + 180.0 / p.stage2.gear_teeth
+    return {
+        "motor_pinion": s1_driver,
+        "layshaft_gear": s1_driven,
+        "layshaft_pinion": s2_driver,
+        "output_gear": s2_driven,
+    }
+
+
 def axial_bands(p: GearboxParams) -> Dict[str, Tuple[float, float]]:
     """Local-Z (axis-aligned) bands each MESH occupies. An inline layshaft reduction
     separates the two meshes AXIALLY on the layshaft: stage-1 mesh (motor pinion <->
@@ -194,6 +230,189 @@ def _hull_extents(centres: List[Tuple[float, float]], radii: List[float],
             "short_mm": min(u_hi - u_lo, v_hi - v_lo)}
 
 
+# --------------------------------------------------------------------------- #
+# ISO 6336 gear strength rating (simplified Method B) + ISO 281 bearing life
+#
+# First-order, fully documented factor chains. Material allowables are for
+# case-carburised 18CrNiMo7-6 (sigma_Flim ~ 460 MPa bending, sigma_Hlim ~ 1500 MPa
+# contact); we report the SAFETY FACTORS S_F (target >= 1.4) and S_H (>= 1.2) per
+# stage and the L10h life (target >= 8000 h) per bearing. Every factor is named with
+# its value below so the rating is auditable. These are NOT a substitute for a full
+# KISSsoft / FVA run -- they are a sane first-order screen that flags a weak stage.
+# --------------------------------------------------------------------------- #
+# ISO 6336 application / dynamic / load-distribution factors (representative EV e-axle
+# values for a quality-class ~6 ground helical gear; documented constants, Method B).
+_K_A = 1.25      # application factor (smooth e-motor input, moderate shock) -- ISO 6336-1
+_K_V = 1.10      # internal dynamic factor (high pitch-line velocity, ground teeth)
+_K_HBETA = 1.15  # face load factor, contact (good helix + crown, rigid e-axle shafts)
+_K_FBETA = 1.15  # face load factor, bending
+_K_HALPHA = 1.0  # transverse load factor, contact (helical, eps_alpha shares load)
+_K_FALPHA = 1.0  # transverse load factor, bending
+# elasticity factor Z_E for steel/steel (sqrt(MPa)) -- ISO 6336-2 Table.
+_Z_E = 189.8
+# allowable stresses (case-carburised 18CrNiMo7-6), already including a nominal life /
+# lubrication credit -- the permissible stress numbers sigma_FP / sigma_HP.
+_SIGMA_FP = 460.0    # permissible bending stress (MPa)
+_SIGMA_HP = 1500.0   # permissible contact stress (MPa)
+_SF_TARGET = 1.4     # ISO 6336 minimum bending safety
+_SH_TARGET = 1.2     # ISO 6336 minimum contact safety
+_L10H_TARGET_H = 8000.0   # ISO 281 minimum bearing life (h)
+
+
+def _lewis_form_factor(z: int) -> float:
+    """Tooth-form factor Y_Fa for a 20deg full-depth involute, x = 0, as a smooth fit to
+    the ISO 6336-3 / DIN 3990 Y_Fa table (Y_Fa falls from ~3.0 at z=12 to ~2.06 at z>=200).
+    A documented first-order interpolation -- avoids shipping the whole table."""
+    # anchor points (z, Y_Fa) from the standard virtual-tooth table (beta ~ 0)
+    table = [(12, 3.02), (14, 2.86), (17, 2.65), (20, 2.51), (25, 2.38),
+             (30, 2.29), (40, 2.18), (50, 2.12), (60, 2.10), (80, 2.07), (150, 2.03)]
+    if z <= table[0][0]:
+        return table[0][1]
+    if z >= table[-1][0]:
+        return table[-1][1]
+    for (z0, y0), (z1, y1) in zip(table, table[1:]):
+        if z0 <= z <= z1:
+            return y0 + (y1 - y0) * (z - z0) / (z1 - z0)
+    return 2.1
+
+
+def _stress_correction_factor(z: int) -> float:
+    """Stress-correction factor Y_Sa (notch/fillet) for 20deg, x = 0 -- a fit to the ISO
+    6336-3 table (Y_Sa rises from ~1.52 at z=12 to ~1.97 at z>=200)."""
+    table = [(12, 1.52), (17, 1.58), (20, 1.62), (25, 1.66), (30, 1.70),
+             (40, 1.76), (50, 1.80), (60, 1.83), (80, 1.88), (150, 1.94)]
+    if z <= table[0][0]:
+        return table[0][1]
+    if z >= table[-1][0]:
+        return table[-1][1]
+    for (z0, y0), (z1, y1) in zip(table, table[1:]):
+        if z0 <= z <= z1:
+            return y0 + (y1 - y0) * (z - z0) / (z1 - z0)
+    return 1.9
+
+
+@dataclass
+class StageRating:
+    stage: str                  # "stage1" / "stage2"
+    tangential_force_n: float   # Ft = 2*T/d_pinion
+    radial_force_n: float       # Fr = Ft*tan(alpha)/cos(beta)
+    axial_force_n: float        # Fa = Ft*tan(beta) (helical)
+    bending_stress_mpa: float   # sigma_F
+    contact_stress_mpa: float   # sigma_H
+    bending_safety: float       # S_F = sigma_FP / sigma_F
+    contact_safety: float       # S_H = sigma_HP / sigma_H
+
+
+@dataclass
+class BearingLife:
+    seat: str                   # label
+    name: str                   # catalogue designation
+    speed_rpm: float
+    equivalent_load_n: float    # dynamic equivalent load P
+    dynamic_rating_n: float     # C
+    l10_mrev: float             # L10 in millions of revolutions
+    l10h_hours: float           # L10h = L10 / (60*n)
+
+
+def _stage_rating(stage_name: str, stage, pinion_pd_mm: float, pinion_torque_nm: float) -> StageRating:
+    """ISO 6336 (simplified Method B) bending + contact stress and the two safety factors
+    for one stage. Ft = 2*T/d (T at the PINION, d in m). The factor chain is the documented
+    constants above; the tooth-form (Y_Fa), stress-correction (Y_Sa), contact-zone (Z_H),
+    elasticity (Z_E) and contact-ratio (Z_eps/Y_eps) factors per ISO 6336-2/-3."""
+    m_n = stage.module_mm
+    b = stage.face_width_mm
+    d = pinion_pd_mm                                   # pinion pitch diameter (mm)
+    z_p = stage.pinion_teeth
+    beta = math.radians(stage.helix_angle_deg)
+    alpha = math.radians(stage.pressure_angle_deg)
+    u = stage.gear_teeth / stage.pinion_teeth          # gear ratio (>= 1)
+
+    Ft = 2.0 * pinion_torque_nm * 1e3 / d              # N (T Nm -> Nmm, /d mm)
+    Fr = Ft * math.tan(alpha) / max(math.cos(beta), 1e-6)
+    Fa = Ft * math.tan(beta)
+
+    # bending: sigma_F = (Ft/(b*m_n)) * Y_Fa*Y_Sa*Y_eps*Y_beta * K_A*K_V*K_Fbeta*K_Falpha
+    Y_Fa = _lewis_form_factor(z_p)
+    Y_Sa = _stress_correction_factor(z_p)
+    Y_eps = 0.7      # contact-ratio factor (eps_alpha ~ 1.6 -> ~0.7), ISO 6336-3
+    Y_beta = max(0.75, 1.0 - stage.helix_angle_deg / 120.0)   # helix factor (beta/120, floored)
+    sigma_F = (Ft / (b * m_n)) * Y_Fa * Y_Sa * Y_eps * Y_beta \
+        * _K_A * _K_V * _K_FBETA * _K_FALPHA
+
+    # contact: sigma_H = Z_H*Z_E*Z_eps*Z_beta * sqrt(Ft/(d*b) * (u+1)/u) * sqrt(K chain)
+    Z_H = 2.49       # zone factor (single-point contact, ~2.49 at alpha 20deg), ISO 6336-2
+    Z_eps = 0.9      # contact-ratio factor for contact, ISO 6336-2
+    Z_beta = math.sqrt(max(math.cos(beta), 1e-6))             # helix factor for contact
+    sigma_H = Z_H * _Z_E * Z_eps * Z_beta \
+        * math.sqrt(Ft / (d * b) * (u + 1.0) / u) \
+        * math.sqrt(_K_A * _K_V * _K_HBETA * _K_HALPHA)
+
+    S_F = _SIGMA_FP / sigma_F if sigma_F > 0 else 0.0
+    S_H = _SIGMA_HP / sigma_H if sigma_H > 0 else 0.0
+    return StageRating(
+        stage=stage_name, tangential_force_n=round(Ft, 1), radial_force_n=round(Fr, 1),
+        axial_force_n=round(Fa, 1), bending_stress_mpa=round(sigma_F, 1),
+        contact_stress_mpa=round(sigma_H, 1), bending_safety=round(S_F, 3),
+        contact_safety=round(S_H, 3))
+
+
+def _bearing_life(label: str, brg, P_n: float, speed_rpm: float) -> BearingLife:
+    """ISO 281 basic rating life: L10 = (C/P)^p * 1e6 rev; L10h = L10 / (60*n). p = 3 for
+    a ball bearing, 10/3 for a roller. P is the dynamic equivalent load (here the radial
+    mesh reaction; for these light-axial helical reactions P ~ Fr to first order)."""
+    p_exp = 3.0 if brg.kind == "ball" else 10.0 / 3.0
+    C = brg.dynamic_load_rating_c_n
+    P = max(P_n, 1.0)
+    l10_rev = (C / P) ** p_exp                          # in millions of revolutions
+    l10h = l10_rev * 1e6 / (60.0 * speed_rpm) if speed_rpm > 0 else float("inf")
+    return BearingLife(
+        seat=label, name=brg.name, speed_rpm=round(speed_rpm, 1),
+        equivalent_load_n=round(P, 1), dynamic_rating_n=round(C, 1),
+        l10_mrev=round(l10_rev, 2), l10h_hours=round(l10h, 1))
+
+
+def gear_ratings(p: GearboxParams) -> List[StageRating]:
+    """ISO 6336 rating for both stages, at the CONTINUOUS design torque (peak * fraction;
+    see GearboxParams.continuous_torque_fraction). Torque at each pinion: stage-1 pinion
+    sees the continuous input torque; the stage-2 pinion (on the layshaft) sees it
+    multiplied by the stage-1 ratio."""
+    p1_pd, _g1, _c1, r1 = _stage_pitch(p.stage1)
+    p2_pd, _g2, _c2, _r2 = _stage_pitch(p.stage2)
+    t_in = p.motor_peak_torque_nm * p.continuous_torque_fraction
+    t_lay = t_in * r1                                   # torque carried by the layshaft pinion
+    return [
+        _stage_rating("stage1", p.stage1, p1_pd, t_in),
+        _stage_rating("stage2", p.stage2, p2_pd, t_lay),
+    ]
+
+
+def bearing_lives(p: GearboxParams) -> List[BearingLife]:
+    """ISO 281 life for each GEARBOX bearing, at the CONTINUOUS duty (continuous_speed_rpm
+    input and the continuous-torque mesh reactions). Shaft speeds scale by the stage ratios;
+    the dynamic equivalent load P ~ the radial mesh reaction that shaft carries, split over
+    its bearings. Conservative first-order screen. The motor-pinion shaft is NOT listed: the
+    pinion is integral with the motor rotor, journalled by the motor's own bearings -- the
+    gearbox adds no bearing there (so none to rate here)."""
+    p1_pd, _g1, _c1, r1 = _stage_pitch(p.stage1)
+    p2_pd, _g2, _c2, r2 = _stage_pitch(p.stage2)
+    n_in = p.continuous_speed_rpm
+    n_lay = n_in / r1 if r1 > 0 else 0.0
+    n_out = n_in / (r1 * r2) if r1 * r2 > 0 else 0.0
+    ratings = {r.stage: r for r in gear_ratings(p)}
+    # the radial mesh reaction each shaft reacts (first order: the mesh radial force)
+    fr1 = ratings["stage1"].radial_force_n             # stage-1 mesh radial
+    fr2 = ratings["stage2"].radial_force_n             # stage-2 mesh radial
+    # the layshaft reacts BOTH meshes (conservatively summed, split over its two bearings);
+    # the output shaft reacts the stage-2 mesh.
+    p_lay = (fr1 + fr2) / 2.0
+    p_out = fr2 / 2.0
+    return [
+        _bearing_life("layshaft_de", p.layshaft_bearing, p_lay, n_lay),
+        _bearing_life("layshaft_nde", p.layshaft_bearing, p_lay, n_lay),
+        _bearing_life("output_shaft", p.output_shaft_bearing, p_out, n_out),
+    ]
+
+
 @dataclass
 class DerivedGearbox:
     # kinematics
@@ -231,6 +450,12 @@ class DerivedGearbox:
     # ICD §7.1 clearance
     icd_min_centre_distance_mm: float  # motor_OD/2 + ring/2 + clearance
     centre_distance_margin_mm: float   # motor_offset - icd_min (must be >= 0)
+    # ISO 6336 gear strength (per stage) + ISO 281 bearing life (per seat)
+    gear_ratings: List[dict]           # StageRating dicts (Ft, sigma_F/H, S_F, S_H)
+    bearing_lives: List[dict]          # BearingLife dicts (P, C, L10, L10h)
+    min_bending_safety: float          # the worst S_F over both stages
+    min_contact_safety: float          # the worst S_H over both stages
+    min_bearing_l10h: float            # the worst L10h over all bearings
 
 
 def derive(p: GearboxParams, motor_params=None, driveline_params=None) -> DerivedGearbox:
@@ -298,6 +523,13 @@ def derive(p: GearboxParams, motor_params=None, driveline_params=None) -> Derive
 
     icd_min = _icd_min_centre_distance(motor_params, driveline_params)
 
+    # ISO 6336 gear ratings + ISO 281 bearing lives (first-order, documented Method B)
+    ratings = gear_ratings(p)
+    lives = bearing_lives(p)
+    min_sf = min((r.bending_safety for r in ratings), default=0.0)
+    min_sh = min((r.contact_safety for r in ratings), default=0.0)
+    min_l10h = min((bl.l10h_hours for bl in lives), default=0.0)
+
     return DerivedGearbox(
         stage1_ratio=round(r1, 4),
         stage2_ratio=round(r2, 4),
@@ -327,6 +559,11 @@ def derive(p: GearboxParams, motor_params=None, driveline_params=None) -> Derive
         mass_estimate_kg=round(mass, 2),
         icd_min_centre_distance_mm=round(icd_min, 2),
         centre_distance_margin_mm=round(motor_offset - icd_min, 2),
+        gear_ratings=[asdict(r) for r in ratings],
+        bearing_lives=[asdict(bl) for bl in lives],
+        min_bending_safety=round(min_sf, 3),
+        min_contact_safety=round(min_sh, 3),
+        min_bearing_l10h=round(min_l10h, 1),
     )
 
 
@@ -536,7 +773,42 @@ def validate(p: GearboxParams, motor_params=None, driveline_params=None) -> List
     if g.stage1_pitch_line_velocity_mps > 60.0:
         issues.append("stage-1 pitch-line velocity %.0f m/s is very high (> 60 m/s); "
                       "raise pinion teeth / module or cap input speed" % g.stage1_pitch_line_velocity_mps)
+
+    # --- ISO 6336 / ISO 281 strength + life flags (rated at the CONTINUOUS design
+    #     torque -- see rating_warnings; geometric buildability above is independent of
+    #     these, so the strength shortfalls are reported here too) ----------------- #
+    issues.extend(rating_warnings(p))
     return issues
+
+
+def rating_warnings(p: GearboxParams) -> List[str]:
+    """ISO 6336 gear-strength and ISO 281 bearing-life flags, rated at the CONTINUOUS
+    design torque (``motor_peak_torque_nm * continuous_torque_fraction`` -- an EV is
+    rated on its thermal/continuous duty, with peak torque only intermittent). Flags a
+    stage whose bending safety S_F < %.2f or contact safety S_H < %.2f, and a bearing
+    whose L10h < %.0f h. Returned BOTH on its own (for report()) and folded into
+    validate() so a weak stage / short-lived bearing surfaces in the same issue list.""" % (
+        _SF_TARGET, _SH_TARGET, _L10H_TARGET_H)
+    out: List[str] = []
+    for r in gear_ratings(p):
+        if r.bending_safety < _SF_TARGET:
+            out.append(
+                "%s bending safety S_F %.2f < %.2f (ISO 6336): sigma_F %.0f MPa vs "
+                "sigma_FP %.0f MPa -- widen the face / raise the module"
+                % (r.stage, r.bending_safety, _SF_TARGET, r.bending_stress_mpa, _SIGMA_FP))
+        if r.contact_safety < _SH_TARGET:
+            out.append(
+                "%s contact safety S_H %.2f < %.2f (ISO 6336): sigma_H %.0f MPa vs "
+                "sigma_HP %.0f MPa -- widen the face / raise the centre distance"
+                % (r.stage, r.contact_safety, _SH_TARGET, r.contact_stress_mpa, _SIGMA_HP))
+    for bl in bearing_lives(p):
+        if bl.l10h_hours < _L10H_TARGET_H:
+            out.append(
+                "bearing %s (%s) L10h %.0f h < %.0f h (ISO 281): equivalent load %.0f N "
+                "vs C %.0f N at %.0f rpm -- select a higher-capacity bearing"
+                % (bl.seat, bl.name, bl.l10h_hours, _L10H_TARGET_H,
+                   bl.equivalent_load_n, bl.dynamic_rating_n, bl.speed_rpm))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -579,8 +851,24 @@ def report(p: GearboxParams, motor_params=None, driveline_params=None) -> str:
         "  diff carrier mount       : Ø%.0f bore, %d x Ø%.1f bolts on Ø%.0f flange" % (
             p.housing.diff_carrier_diameter_mm, p.housing.diff_mount_bolt_count,
             p.housing.diff_mount_bolt_diameter_mm, p.housing.diff_mount_flange_diameter_mm),
-        "  validation: %s" % ("OK (geometry is buildable)" if not issues else "%d issue(s)" % len(issues)),
+        "  ISO 6336 rating @ %.0f%% peak torque (continuous duty):" % (
+            100.0 * p.continuous_torque_fraction),
     ]
+    for r in g.gear_ratings:
+        lines.append(
+            "    %-7s : Ft %.0f N  sigma_F %.0f / sigma_H %.0f MPa  -> S_F %.2f (>=%.1f) "
+            "S_H %.2f (>=%.1f)" % (
+                r["stage"], r["tangential_force_n"], r["bending_stress_mpa"],
+                r["contact_stress_mpa"], r["bending_safety"], _SF_TARGET,
+                r["contact_safety"], _SH_TARGET))
+    lines.append("  ISO 281 bearing life @ %.0f rpm input (continuous):" % p.continuous_speed_rpm)
+    for bl in g.bearing_lives:
+        lines.append(
+            "    %-12s (%-6s): P %.0f N / C %.0f N @ %.0f rpm -> L10h %.0f h (>=%.0f)" % (
+                bl["seat"], bl["name"], bl["equivalent_load_n"], bl["dynamic_rating_n"],
+                bl["speed_rpm"], bl["l10h_hours"], _L10H_TARGET_H))
+    lines.append(
+        "  validation: %s" % ("OK (geometry is buildable)" if not issues else "%d issue(s)" % len(issues)))
     for it in issues:
         lines.append("    - %s" % it)
     return "\n".join(lines)

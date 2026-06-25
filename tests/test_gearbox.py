@@ -258,8 +258,13 @@ def test_output_and_diff_mount_coaxial_with_diff_axis():
     assert dm["origin3"][0] == pytest.approx(0.0) and dm["origin3"][1] == pytest.approx(0.0)
 
 
+def _gear_profile_radii(s, centre):
+    """Polar radii of a toothed-gear prism profile measured from its own axis (centre)."""
+    return [math.hypot(x - centre[0], y - centre[1]) for (x, y) in s["profile"]]
+
+
 def test_gears_lie_inside_the_housing_cavity_axially():
-    """Every gear blank must sit within the housing cavity axial span (0 .. cavity_len)."""
+    """Every toothed gear must sit within the housing cavity axial span (0 .. cavity_len)."""
     p = GearboxParams()
     g = eng.derive(p)
     blue = bp.generate(p)
@@ -270,8 +275,8 @@ def test_gears_lie_inside_the_housing_cavity_axially():
 
 
 def test_gears_fit_radially_inside_the_inner_wall():
-    """Each gear tip must clear the housing inner wall (gear tip radius from its axis,
-    plus its axis distance from the diff origin, < housing inner radius)."""
+    """Each gear TOOTH TIP must clear the housing inner wall (max profile radius from its
+    own axis, plus its axis distance from the diff origin, < housing inner radius)."""
     p = GearboxParams()
     g = eng.derive(p)
     pos = eng.axis_positions(p)
@@ -280,8 +285,9 @@ def test_gears_fit_radially_inside_the_inner_wall():
                "layshaft_pinion": pos["layshaft"], "output_gear": pos["diff"]}
     for s in blue["build_steps"]:
         if s["role"] == "gear":
-            cx, cy = axis_of[s["id"]]
-            reach = math.hypot(cx, cy) + s["outer_radius"]
+            centre = axis_of[s["id"]]
+            tip_r = max(_gear_profile_radii(s, centre))
+            reach = math.hypot(centre[0], centre[1]) + tip_r
             assert reach <= g.housing_inner_radius_mm + 1e-6
 
 
@@ -332,26 +338,43 @@ def _shaft_od_for(p):
     }
 
 
-def test_no_gear_blank_is_a_solid_disc_on_its_shaft():
-    """Every gear blank is mounted on a shaft WITHOUT sharing solid: either UNITED into a
-    shaft body modelled here (one cluster body) or a TUBE bored to the mating shaft OD
-    (bore ID >= shaft OD => a press fit, never a disc overlapping the shaft)."""
+def test_no_gear_is_a_solid_disc_on_its_shaft():
+    """Every REAL toothed gear is mounted on a shaft WITHOUT sharing solid, one of three
+    physically-correct ways:
+      * UNITED into a shaft body modelled here (the layshaft cluster) -> one body.
+      * a toothed PRISM bored to the mating shaft OD (a press fit; `<gid>_bore` subtract
+        whose ID >= the shaft OD) -- when the gear has a hub (bore radius < root radius).
+      * a SOLID toothed pinion machined integral with its shaft (no bore) -- when the gear
+        is too small to bore (bore radius >= root radius), e.g. the motor pinion on the
+        rotor-shaft tip. Then there is nothing in THIS part for it to overlap."""
+    from gearbox_nx.gear_profile import gear_metrics as _gm
     p = GearboxParams()
     steps = _steps_by_id(p)
     shaft_od = _shaft_od_for(p)
     for gid, od in shaft_od.items():
         s = steps[gid]
+        assert s["kind"] == "prism", "%s is a real toothed gear (prism), not %s" % (gid, s["kind"])
         if s["boolean"] == "unite":
-            # united onto a shaft body -> one solid by construction, no overlap
             assert s["target"] in steps, "%s unites onto a missing body" % gid
             assert steps[s["target"]]["role"] in ("layshaft",)
+            continue
+        stage = getattr(p, _GEAR_SPEC[gid][0])
+        teeth = getattr(stage, _GEAR_SPEC[gid][1])
+        root_r = _gm(stage.module_mm, teeth, stage.pressure_angle_deg)["root_radius"]
+        if od / 2.0 >= root_r:
+            # integral pinion -- no hub to bore, so NO bore step (and no keyway)
+            assert ("%s_bore" % gid) not in steps, (
+                "%s has bore Ø%.1f >= root Ø%.1f: it must be a solid integral pinion"
+                % (gid, od, 2.0 * root_r))
+            assert ("%s_keyway" % gid) not in steps
         else:
-            assert s["kind"] == "tube", "%s must be a bored tube or a unite, not a %s" % (gid, s["kind"])
-            bore_id = 2.0 * s["inner_radius"]
-            assert bore_id >= od - 1e-6, (
-                "%s bore Ø%.1f < shaft Ø%.1f: the blank would interpenetrate the shaft"
+            bore = steps["%s_bore" % gid]
+            assert bore["boolean"] == "subtract" and bore["target"] == gid
+            bore_id = 2.0 * bore["outer_radius"]
+            assert od - 1e-6 <= bore_id, (
+                "%s bore Ø%.1f < shaft Ø%.1f: the gear would interpenetrate the shaft"
                 % (gid, bore_id, od))
-            assert s["inner_radius"] < s["outer_radius"]   # a real ring, not inverted
+            assert bore_id < 2.0 * root_r          # bore stays inside the hub (root)
 
 
 def test_clustered_layshaft_unites_its_gears_after_the_shaft_exists():
@@ -369,14 +392,16 @@ def test_clustered_layshaft_unites_its_gears_after_the_shaft_exists():
 
 
 def test_non_clustered_layshaft_bores_its_gears_to_the_shaft_od():
-    """With cluster_gears off, the layshaft blanks become press-fit TUBES bored to the
-    shaft OD instead -- still no solid-disc-on-shaft overlap (the alternative fix)."""
+    """With cluster_gears off, the layshaft toothed gears become CREATEd prisms bored to
+    the shaft OD instead -- still no solid-disc-on-shaft overlap (the alternative fix)."""
     p = GearboxParams().overridden(**{"layshaft.cluster_gears": False})
     steps = _steps_by_id(p)
     for gid in ("layshaft_gear", "layshaft_pinion"):
         s = steps[gid]
-        assert s["kind"] == "tube" and s["boolean"] == "create"
-        assert 2.0 * s["inner_radius"] >= p.layshaft.shaft_diameter_mm - 1e-6
+        assert s["kind"] == "prism" and s["boolean"] == "create"
+        bore = steps["%s_bore" % gid]
+        assert bore["boolean"] == "subtract" and bore["target"] == gid
+        assert 2.0 * bore["outer_radius"] >= p.layshaft.shaft_diameter_mm - 1e-6
 
 
 def test_housing_bearing_bore_clears_every_shaft():
@@ -438,3 +463,315 @@ def test_clearance_module_sees_no_gross_solid_overlap_growth():
     # the part envelope stays bounded by the housing oval + flanges (a few hundred mm),
     # i.e. nothing exploded; a finite, sane bounding box.
     assert all(abs(v) < 1000.0 for v in lo + hi)
+
+
+# --------------------------------------------------------------------------- #
+# REAL INVOLUTE TEETH -- gears are no longer smooth pitch-diameter blanks: each is a
+# toothed prism whose outline lies between the root and tip circle and has exactly z
+# teeth, PHASED so the meshing pair interlocks (no interpenetration).
+# --------------------------------------------------------------------------- #
+from gearbox_nx.gear_profile import gear_metrics   # noqa: E402
+
+_GEAR_SPEC = {  # gid -> (stage_attr, teeth_attr)
+    "motor_pinion": ("stage1", "pinion_teeth"),
+    "layshaft_gear": ("stage1", "gear_teeth"),
+    "layshaft_pinion": ("stage2", "pinion_teeth"),
+    "output_gear": ("stage2", "gear_teeth"),
+}
+
+
+def _gear_axis(p):
+    pos = eng.axis_positions(p)
+    return {"motor_pinion": pos["motor"], "layshaft_gear": pos["layshaft"],
+            "layshaft_pinion": pos["layshaft"], "output_gear": pos["diff"]}
+
+
+def test_every_gear_is_a_real_toothed_prism():
+    """Every gear is a closed involute outline extruded as a prism (not a smooth disc)."""
+    blue = bp.generate(GearboxParams())
+    gears = {s["id"]: s for s in blue["build_steps"] if s["role"] == "gear"}
+    assert set(gears) == set(_GEAR_SPEC)
+    for s in gears.values():
+        assert s["kind"] == "prism" and s["profile"] is not None
+        assert len(s["profile"]) > 100          # a real toothed loop, not a 4-pt blank
+
+
+def test_gear_outline_radii_lie_between_root_and_tip():
+    """The toothed outline radii (from the gear's own axis) all fall in [root, tip] -- a
+    genuine involute profile, never inside the root or beyond the tip circle."""
+    p = GearboxParams()
+    blue = bp.generate(p)
+    axis = _gear_axis(p)
+    for s in blue["build_steps"]:
+        if s["role"] != "gear":
+            continue
+        stage = getattr(p, _GEAR_SPEC[s["id"]][0])
+        teeth = getattr(stage, _GEAR_SPEC[s["id"]][1])
+        shift = (stage.pinion_profile_shift if "pinion" in _GEAR_SPEC[s["id"]][1]
+                 else stage.gear_profile_shift)
+        m = gear_metrics(stage.module_mm, teeth, stage.pressure_angle_deg, profile_shift=shift)
+        cx, cy = axis[s["id"]]
+        radii = [math.hypot(x - cx, y - cy) for (x, y) in s["profile"]]
+        assert min(radii) >= m["root_radius"] - 1e-6
+        assert max(radii) <= m["tip_radius"] + 1e-6
+        assert max(radii) == pytest.approx(m["tip_radius"], abs=1e-3)   # teeth reach the tip
+
+
+def test_tooth_count_equals_z():
+    """The outline has exactly z teeth: count the radial peaks at the tip circle."""
+    p = GearboxParams()
+    blue = bp.generate(p)
+    axis = _gear_axis(p)
+    for s in blue["build_steps"]:
+        if s["role"] != "gear":
+            continue
+        stage = getattr(p, _GEAR_SPEC[s["id"]][0])
+        teeth = getattr(stage, _GEAR_SPEC[s["id"]][1])
+        shift = (stage.pinion_profile_shift if "pinion" in _GEAR_SPEC[s["id"]][1]
+                 else stage.gear_profile_shift)
+        m = gear_metrics(stage.module_mm, teeth, stage.pressure_angle_deg, profile_shift=shift)
+        cx, cy = axis[s["id"]]
+        # a vertex is "at the tip" if within 1% of (tip-root) of the tip radius; the tip
+        # arcs form `teeth` contiguous runs of such vertices around the gear.
+        thr = m["tip_radius"] - 0.01 * (m["tip_radius"] - m["root_radius"])
+        at_tip = [math.hypot(x - cx, y - cy) >= thr for (x, y) in s["profile"]]
+        runs = sum(1 for i in range(len(at_tip))
+                   if at_tip[i] and not at_tip[i - 1])      # rising edges (wraps around)
+        assert runs == teeth, "%s: counted %d tooth tips, expected z=%d" % (s["id"], runs, teeth)
+
+
+def _gear_solids(p, gid):
+    from vehicle_nx import clearance as cl
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    I3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    return cl.part_solids({"build_steps": [steps[gid]]}, I3, [0.0, 0.0, 0.0])
+
+
+def test_meshing_pairs_do_not_interpenetrate():
+    """The two meshing pairs must be PHASED (tooth-in-gap at the line of centres) so the
+    toothed solids interlock without clashing -- the sampled-solid clearance check (which
+    bounds a prism by its true swept polygon) reports NO interpenetration."""
+    from vehicle_nx import clearance as cl
+    p = GearboxParams()
+    for a, b in (("motor_pinion", "layshaft_gear"), ("layshaft_pinion", "output_gear")):
+        clash = cl.solids_interpenetrate(_gear_solids(p, a), _gear_solids(p, b), touch_tol=0.5)
+        assert clash is None, "%s <-> %s interpenetrate by %s mm (mesh not phased)" % (a, b, clash)
+
+
+def test_unphased_mesh_would_clash_so_the_check_is_real():
+    """Sanity the phasing test has teeth: with the driven gear's phase removed (tooth on
+    tooth instead of tooth-in-gap) the sampled solids DO clash -- so the pass above is the
+    phasing working, not a blind spot in the clearance sampler."""
+    from vehicle_nx import clearance as cl
+    from gearbox_nx.gear_profile import gear_outline
+    p = GearboxParams()
+    pos = eng.axis_positions(p)
+    phase = eng.mesh_phasing(p)
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    I3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+    def placed(gid, rotate_deg):
+        s = steps[gid]
+        stage = getattr(p, _GEAR_SPEC[gid][0])
+        teeth = getattr(stage, _GEAR_SPEC[gid][1])
+        cx, cy = _gear_axis(p)[gid]
+        out = gear_outline(stage.module_mm, teeth, stage.pressure_angle_deg,
+                           flank_pts=4, rotate_deg=rotate_deg)
+        prof = [(x + cx, y + cy) for (x, y) in out]
+        bad = dict(s)
+        bad["profile"] = prof
+        return cl.part_solids({"build_steps": [bad]}, I3, [0.0, 0.0, 0.0])
+
+    # drive the layshaft_gear with the driver's phase (tooth toward the mate) -> clash
+    drv = _gear_solids(p, "motor_pinion")
+    bad = placed("layshaft_gear", phase["layshaft_gear"] - 180.0 / p.stage1.gear_teeth)
+    assert cl.solids_interpenetrate(drv, bad, touch_tol=0.5) is not None
+
+
+# --------------------------------------------------------------------------- #
+# BEARINGS -- representative rolling bearings (race rings) at each shaft journal,
+# press-fit (inner-race bore = the journal OD), seated in a housing counterbore pocket.
+# --------------------------------------------------------------------------- #
+# the three modelled bearing seats: the two layshaft (internal shaft) journals + the
+# output shaft. The motor-pinion shaft has NO gearbox bearing (the pinion is integral with
+# the motor rotor, journalled by the motor's own bearings).
+_BEARING_SEATS = ("layshaft_de", "layshaft_nde", "output_shaft")
+
+
+def test_bearings_present_at_every_seat():
+    """Each bearing seat is modelled as three concentric race rings (inner / rolling /
+    outer) -- all TUBE bodies; the motor-pinion shaft is NOT journalled here."""
+    blue = bp.generate(GearboxParams())
+    steps = {s["id"]: s for s in blue["build_steps"]}
+    for label in _BEARING_SEATS:
+        for ring in ("inner", "rolling", "outer"):
+            sid = "bearing_%s_%s" % (label, ring)
+            assert sid in steps, "missing bearing ring %s" % sid
+            assert steps[sid]["kind"] == "tube" and steps[sid]["role"] == "bearing"
+    # no gearbox bearing on the integral motor pinion
+    assert not any(k.startswith("bearing_motor_shaft") for k in steps)
+
+
+def test_bearing_inner_race_bore_is_a_press_fit_on_the_journal():
+    """The inner-race bore = the journal OD it presses onto (no shared solid, ICD §7.6);
+    the race rings stack OUTWARD (inner OD < rolling ID, rolling OD < outer ID) and the
+    outer-race OD = the bearing OD."""
+    p = GearboxParams()
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    journal = {
+        "layshaft_de": (p.layshaft.bearing_seat_diameter_mm, p.layshaft_bearing),
+        "layshaft_nde": (p.layshaft.bearing_seat_diameter_mm, p.layshaft_bearing),
+        "output_shaft": (p.output.bore_diameter_mm, p.output_shaft_bearing),
+    }
+    for label, (od, brg) in journal.items():
+        inner = steps["bearing_%s_inner" % label]
+        rolling = steps["bearing_%s_rolling" % label]
+        outer = steps["bearing_%s_outer" % label]
+        assert 2.0 * inner["inner_radius"] == pytest.approx(od, abs=1e-6), (
+            "%s inner-race bore Ø%.1f != journal Ø%.1f" % (label, 2.0 * inner["inner_radius"], od))
+        assert inner["outer_radius"] < rolling["inner_radius"]
+        assert rolling["outer_radius"] < outer["inner_radius"]
+        assert 2.0 * outer["outer_radius"] == pytest.approx(brg.od_d_mm, abs=1e-6)
+
+
+def test_bearing_outer_race_seats_in_a_housing_pocket():
+    """The outer race seats in a housing counterbore pocket (= bearing OD), cut from the
+    housing shell coaxial with the shaft -- so the outer OD touches metal, never overlaps."""
+    p = GearboxParams()
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    brg_of = {"layshaft_de": p.layshaft_bearing, "layshaft_nde": p.layshaft_bearing,
+              "output_shaft": p.output_shaft_bearing}
+    for label, brg in brg_of.items():
+        pocket = steps["bearing_pocket_%s" % label]
+        assert pocket["boolean"] == "subtract" and pocket["target"] == "housing_shell"
+        assert 2.0 * pocket["outer_radius"] == pytest.approx(brg.od_d_mm, abs=1e-6)
+
+
+def test_bearings_do_not_interpenetrate_the_gears_or_coupling():
+    """Each bearing (bounded by its outer-race envelope) clears the gear on its shaft AND
+    the output coupling: the layshaft bearings are flush at the cavity face (never enter the
+    cavity), and the output bearing sits OUTBOARD of the coupling (no shared solid)."""
+    from vehicle_nx import clearance as cl
+    p = GearboxParams()
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    I3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+    def sol(sid):
+        return cl.part_solids({"build_steps": [steps[sid]]}, I3, [0.0, 0.0, 0.0])
+    pairs = [("bearing_layshaft_de_outer", "motor_pinion"),
+             ("bearing_output_shaft_outer", "output_gear"),
+             ("bearing_layshaft_nde_outer", "output_gear"),
+             ("bearing_output_shaft_outer", "output_coupling"),
+             ("bearing_output_shaft_inner", "output_coupling")]
+    for a, b in pairs:
+        assert cl.solids_interpenetrate(sol(a), sol(b), touch_tol=0.5) is None, (
+            "%s interpenetrates %s" % (a, b))
+
+
+def test_layshaft_de_bearing_clears_the_motor_flange():
+    """The layshaft DE bearing is wider than the -Z cover, so its -Z face protrudes into the
+    motor-flange axial band. A clearance relief is cast into the motor flange (coaxial with
+    the LAYSHAFT axis, Ø >= bearing OD) over exactly that protrusion, so the bearing never
+    shares solid with the Ø298 flange disc. The flange OD / bolt circle / pilot / mating face
+    are untouched (the relief sits between the pilot bore and the bolt circle)."""
+    p = GearboxParams()
+    g = eng.derive(p)
+    h = p.housing
+    pos = eng.axis_positions(p)
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    relief = steps["motor_flange_layshaft_relief"]
+    bearing = steps["bearing_layshaft_de_outer"]
+    # cuts the flange, coaxial with the layshaft axis, wide enough for the bearing OD
+    assert relief["boolean"] == "subtract" and relief["target"] == "motor_flange"
+    assert relief["origin3"][0] == pytest.approx(pos["layshaft"][0], abs=1e-6)
+    assert relief["origin3"][1] == pytest.approx(pos["layshaft"][1], abs=1e-6)
+    assert 2.0 * relief["outer_radius"] >= 2.0 * bearing["outer_radius"]
+    # the relief spans the bearing's protrusion into the flange band (z <= cover outer face)
+    cover_outer_z = -h.end_cover_thickness_mm
+    flange_lo = cover_outer_z - h.motor_flange_thickness_mm
+    r_lo, r_hi = relief["origin3"][2], relief["origin3"][2] + relief["length"]
+    b_lo = bearing["origin3"][2]
+    assert r_lo <= b_lo + 1e-6                          # reaches the bearing -Z face
+    assert r_hi >= cover_outer_z - 1e-6                 # up to / through the flange +Z face
+    assert r_lo >= flange_lo - 1.0                      # cuts within the flange band (real metal)
+    # the flange itself is unchanged: still matches the motor DE flange
+    mf = eng.resolve_motor_flange(p)
+    motor = eng.motor_de_flange()
+    assert mf["flange_diameter_mm"] == pytest.approx(motor["flange_diameter_mm"], abs=1e-6)
+    # the relief stays inside the bolt circle (does not break out a bolt / the OD)
+    bc_r = mf["bolt_circle_diameter_mm"] / 2.0
+    d_axes = math.hypot(pos["layshaft"][0] - pos["motor"][0], pos["layshaft"][1] - pos["motor"][1])
+    assert d_axes + relief["outer_radius"] < bc_r - mf["bolt_diameter_mm"] / 2.0
+
+
+def test_output_coupling_clears_the_housing_cover():
+    """The output coupling pokes through a clearance counterbore in the +Z cover (= coupling
+    OD + clearance) so it does NOT bury into the cast end cover, and its outer mating face
+    stays at b2[1] + flange_thickness (the driveline diff-input coupling point, unchanged)."""
+    p = GearboxParams()
+    bands = eng.axial_bands(p)
+    steps = {s["id"]: s for s in bp.generate(p)["build_steps"]}
+    oc = steps["output_coupling"]
+    cb = steps["output_coupling_clearance"]
+    assert cb["boolean"] == "subtract" and cb["target"] == "housing_shell"
+    # the clearance bore is wider than the coupling OD (so the coupling never touches metal)
+    assert 2.0 * cb["outer_radius"] > p.output.flange_diameter_mm
+    # mating face unchanged
+    face_z = oc["z0"] + oc["length"]
+    assert face_z == pytest.approx(bands["stage2"][1] + p.output.flange_thickness_mm, abs=1e-6)
+
+
+# --------------------------------------------------------------------------- #
+# ISO 6336 gear rating + ISO 281 bearing life
+# --------------------------------------------------------------------------- #
+def test_iso6336_safety_factors_computed_and_sane():
+    """Both stages get an ISO 6336 bending + contact rating; the safety factors are
+    positive, finite and in a sane engineering range, and the DEFAULT clears the targets."""
+    p = GearboxParams()
+    ratings = eng.gear_ratings(p)
+    assert {r.stage for r in ratings} == {"stage1", "stage2"}
+    for r in ratings:
+        assert r.tangential_force_n > 0 and r.radial_force_n > 0
+        assert 0.1 < r.bending_safety < 10.0      # sane range, not a divide-by-zero
+        assert 0.1 < r.contact_safety < 10.0
+        assert r.bending_safety >= eng._SF_TARGET   # default clears bending target
+        assert r.contact_safety >= eng._SH_TARGET   # default clears contact target
+    # exposed on the derived summary too
+    g = eng.derive(p)
+    assert g.min_bending_safety == pytest.approx(min(r.bending_safety for r in ratings))
+    assert g.min_contact_safety == pytest.approx(min(r.contact_safety for r in ratings))
+
+
+def test_iso6336_flags_a_weak_stage():
+    """Shrinking a face width (without touching the centre distance) drops the safety
+    below target, and rating_warnings()/validate() flag it."""
+    p = GearboxParams().overridden(**{"stage2.face_width_mm": 8.0})
+    warns = eng.rating_warnings(p)
+    assert any("stage2" in w and ("S_F" in w or "S_H" in w) for w in warns)
+    assert any("stage2" in i for i in eng.validate(p))
+
+
+def test_iso281_bearing_life_computed_and_sane():
+    """Every bearing gets an ISO 281 L10 / L10h life; the lives are positive, finite, use
+    the right exponent (ball p=3, roller p=10/3) and the DEFAULT clears the 8000 h target."""
+    p = GearboxParams()
+    lives = eng.bearing_lives(p)
+    assert {bl.seat for bl in lives} == {"layshaft_de", "layshaft_nde", "output_shaft"}
+    for bl in lives:
+        assert bl.l10_mrev > 0 and bl.l10h_hours > 0
+        assert bl.equivalent_load_n > 0 and bl.dynamic_rating_n > 0
+        assert bl.l10h_hours >= eng._L10H_TARGET_H     # default clears the life target
+    g = eng.derive(p)
+    assert g.min_bearing_l10h == pytest.approx(min(bl.l10h_hours for bl in lives))
+
+
+def test_iso281_flags_a_short_lived_bearing():
+    """Down-rating a bearing (tiny C) drops L10h below target and validate() flags it."""
+    p = GearboxParams().overridden(**{"output_shaft_bearing.dynamic_load_rating_c_n": 3000.0})
+    assert any("output_shaft" in i and "L10h" in i for i in eng.validate(p))
+
+
+def test_report_includes_iso_ratings():
+    """report() surfaces the per-stage S_F/S_H and the per-bearing L10h."""
+    txt = eng.report(GearboxParams())
+    assert "S_F" in txt and "S_H" in txt and "L10h" in txt

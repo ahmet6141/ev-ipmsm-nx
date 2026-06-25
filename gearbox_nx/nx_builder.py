@@ -40,6 +40,7 @@ _GEARBOX_ROLE_NAME = {
     "Gears": "REDUCTION_GEARS",
     "Layshaft": "LAYSHAFT",
     "Output_Coupling": "OUTPUT_COUPLING",
+    "Bearings": "ROLLING_BEARINGS",
 }
 
 
@@ -47,8 +48,14 @@ def _gearbox_component_of(step_id):
     """Group a build-step id into a manufacturable component (per-part STEP export
     + body naming). Mirrors motor_nx.nx_builder._component_of's contract."""
     base = step_id.split("#")[0]
-    if base.startswith("housing_shell") or base.startswith("housing_cavity") or base.startswith("oil_sump"):
+    # housing cuts that happen to start with "bearing_" (clearance bores + race pockets)
+    # are HOUSING features, not bearing bodies -- check them first.
+    if (base.startswith("housing_shell") or base.startswith("housing_cavity")
+            or base.startswith("oil_sump") or base.startswith("bearing_bore")
+            or base.startswith("bearing_pocket")):
         return "Housing"
+    if base.startswith("bearing_"):      # the rolling-bearing race rings (own bodies)
+        return "Bearings"
     if base.startswith("motor_flange") or base.startswith("motor_pilot"):
         return "Motor_Flange"
     if base.startswith("diff_mount") or base.startswith("diff_carrier"):
