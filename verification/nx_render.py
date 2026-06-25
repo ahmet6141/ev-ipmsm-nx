@@ -37,22 +37,51 @@ def _targets():
     return [os.path.join(vdir, p) for p in _DEFAULT if os.path.exists(os.path.join(vdir, p))]
 
 
+def _find_loaded(s, prt):
+    """The already-loaded Part matching this file path, or None. Subsystem parts are
+    loaded as COMPONENTS when the vehicle assembly is open, so OpenDisplay would fail
+    'File already exists' -- reuse the loaded part and just SetDisplay it instead."""
+    target = os.path.normcase(os.path.abspath(prt))
+    for p in s.Parts:
+        try:
+            if os.path.normcase(p.FullPath) == target:
+                return p
+        except Exception:
+            pass
+    return None
+
+
 def _render_part(s, uf, lw, prt, render_root):
     name = os.path.splitext(os.path.basename(prt))[0]
-    try:
-        part = (getattr(s.Parts, "OpenDisplay", None) or s.Parts.Open)(prt)
-        part = part[0] if isinstance(part, tuple) else part
-    except Exception as exc:
-        lw.WriteLine("OPEN FAIL %s: %s" % (name, exc)); return 0
-    work = s.Parts.Work
+    opened_here = False
+    loaded = _find_loaded(s, prt)
+    if loaded is not None:
+        try:
+            s.Parts.SetDisplay(loaded, False, False)   # display the already-loaded part
+        except Exception as exc:
+            lw.WriteLine("SetDisplay %s note: %s" % (name, str(exc)[:70]))
+    else:
+        try:
+            r = (getattr(s.Parts, "OpenDisplay", None) or s.Parts.Open)(os.path.abspath(prt))
+            r[0] if isinstance(r, tuple) else r
+            opened_here = True
+        except Exception as exc:
+            lw.WriteLine("OPEN FAIL %s: %s" % (name, str(exc)[:70])); return 0
+    work = s.Parts.Display or s.Parts.Work     # render the DISPLAYED part
     outdir = os.path.join(render_root, name)
     if not os.path.isdir(outdir):
         os.makedirs(outdir, exist_ok=True)
     mv = work.ModelingViews.WorkView
-    try:
-        mv.RenderingStyle = NXOpen.View.RenderingStyleType.PartiallyShaded
-    except Exception:
-        pass
+    # SHADED WITH EDGES (was wireframe before -- PartiallyShaded is not a valid member;
+    # ShadedWithEdges is, and is best for spotting bad proportions / surface flaws).
+    for style in ("ShadedWithEdges", "Shaded"):
+        st = getattr(NXOpen.View.RenderingStyleType, style, None)
+        if st is not None:
+            try:
+                mv.RenderingStyle = st
+                break
+            except Exception:
+                pass
     fmt = uf.Disp.ImageFormat.PNG
     bg = NXOpen.UF.DispBackgroundColor.WHITE
     made = 0
@@ -74,12 +103,14 @@ def _render_part(s, uf, lw, prt, render_root):
         except Exception as exc:
             lw.WriteLine("  render %s/%s ERR %s" % (name, vn, str(exc)[:70]))
     lw.WriteLine("%-22s -> %d view(s) in %s" % (name, made, outdir))
-    # close non-displayed parts to free memory (skip the very last so the session stays valid)
-    try:
-        work.Close(NXOpen.BasePart.CloseWholeTree.TrueValue,
-                   NXOpen.BasePart.CloseModified.CloseModified, None)
-    except Exception:
-        pass
+    # only close parts WE opened here -- never close an already-loaded part (it may be a
+    # live component of an open assembly; closing it would break the assembly).
+    if opened_here:
+        try:
+            work.Close(NXOpen.BasePart.CloseWholeTree.TrueValue,
+                       NXOpen.BasePart.CloseModified.CloseModified, None)
+        except Exception:
+            pass
     return made
 
 
