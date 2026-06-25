@@ -51,15 +51,24 @@ class FrameParams:
     # lateral spacing between the inner faces of the two longitudinal rails
     frame_inner_width_mm: float = 1100.0
 
-    # AXLE NOTCH / kick-up: at each axle x-station the suspension links and the
-    # driveline half-shaft sweep through the rail's Y/Z band at the hub-centre height.
-    # The rail is locally RELIEVED there (a clearance window through its lower/mid
-    # section) so the corner + half-shaft envelope clears it -- the rail "arches" over
-    # the axle, leaving a continuous bridge above the notch. (Resolves the assembled-
-    # vehicle rail/arm + rail/half-shaft collisions the adversarial review found.)
+    # AXLE NOTCH / relief: at each axle x-station the suspension control arms, the toe
+    # link, the anti-roll link/damper AND the driveline half-shaft all sweep through the
+    # rail's Y band as they run from the inboard pickups out to the wheel hub. Measured
+    # against the actual swept envelope, those members cross the rail over X = axle ±~145
+    # and reach the FULL rail height (z up to the rail top ~390) and into the abutting
+    # crush-can overhang. So the relief is a FULL-SECTION clearance WINDOW centred on the
+    # axle x-station, relieving the rail (and the crush-can end) all the way through its
+    # height over that X band -- the rail is structurally CONTINUOUS through the battery
+    # tray + crossmembers and the subframe pads sit just inboard of the window; the open
+    # axle bay is where the corner + half-shaft pass. (Resolves the assembled-vehicle
+    # rail/arm + rail/half-shaft + crush-can/arm collisions the NX inspection found.)
+    #
+    # ``axle_notch_half_width_mm`` is the half-X-extent of the window each side of the
+    # axle station; ``axle_notch_top_mm`` is the world Z the relief reaches (>= the rail
+    # top so the FULL section is relieved -- the swept arms/anti-roll reach the rail top).
     axle_notch: bool = True
-    axle_notch_x_width_mm: float = 200.0   # X length of the relief window (centred on the axle)
-    axle_notch_top_mm: float = 365.0       # world Z up to which the rail is relieved
+    axle_notch_half_width_mm: float = 165.0   # half X-extent of the relief window each side of the axle
+    axle_notch_top_mm: float = 400.0          # world Z up to which the rail (+ can end) is relieved (>= rail top)
 
 
 @dataclass

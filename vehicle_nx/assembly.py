@@ -431,6 +431,18 @@ def _component_solids(c: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
     return clearance.part_solids(blue, c["orientation"], c["origin_mm"])
 
 
+def _component_voids(c: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The oriented vehicle-frame VOID primitives of a placed component (subtract bodies:
+    bores, bolt holes, hollow-box cavities and -- the crucial one -- the chassis axle
+    NOTCH relief windows). The void-aware clash test (clearance.solids_clash) treats a
+    neighbour point that passes THROUGH one of these voids as clearance, not a clash, so
+    a half-shaft / control arm sweeping through the rail notch is not falsely flagged."""
+    blue = _role_blueprint(c["role"], c.get("variant"))
+    if blue is None:
+        return []
+    return clearance.part_voids(blue, c["orientation"], c["origin_mm"])
+
+
 def interpenetration_pairs(p: VehicleParams,
                            touch_tol: float = _TOUCH_TOL_MM) -> List[Dict[str, Any]]:
     """Every NON-CHASSIS component pair whose SOLIDS interpenetrate by more than
@@ -470,10 +482,96 @@ def interpenetration_pairs(p: VehicleParams,
     return out
 
 
+def comprehensive_interpenetration_pairs(
+        p: VehicleParams, touch_tol: float = _TOUCH_TOL_MM) -> List[Dict[str, Any]]:
+    """HONEST whole-vehicle clash check (ICD §7.1/§7.4.1): the VOID-AWARE sampled-solid
+    overlap test run between EVERY component pair INCLUDING the chassis, with NO
+    "mating-neighbour" skip -- except a NARROW, documented allowlist for the bolted
+    integrated e-axle / hub unit.
+
+    Why this exists. The older :func:`interpenetration_pairs` is a FALSE PASS: it EXCLUDES
+    the chassis outright and SKIPS every "mating neighbour" pair, which hid five real
+    clashes the user confirmed in NX (half-shaft/diff piercing the rail beyond the notch,
+    the subframe cradle overlapping the control arms, the cradle/e-axle overlap). This
+    check fixes both blind spots:
+
+      * The CHASSIS is included. Its rail axle-NOTCH relief and every hollow-box cavity /
+        bolt bore are real VOIDS (clearance.part_voids), so a half-shaft or control arm
+        passing THROUGH the notch is clearance, not a clash -- only an overlap with the
+        rail's REMAINING solid is flagged.
+      * Every pair is checked. Intended bolt/press-fit/butt contacts touch only to
+        ``touch_tol`` (a few mm) and so do not register; a deeper solid overlap does.
+
+    The ONLY skipped pairs are the bolted INTEGRATED E-AXLE / WHEEL-HUB unit
+    (``_EAXLE_UNIT_PAIRS``): gearbox<->motor (DE-flange bolted), gearbox<->differential
+    (carrier seats inside the housing) and driveline<->its-own-suspension-hub (the wheel
+    hub flange in the upright bore). Those are genuinely one assembled unit whose solids
+    seat together by design. EVERY OTHER pair -- notably subframe<->suspension,
+    subframe<->chassis, driveline<->chassis, suspension<->chassis, subframe<->driveline,
+    subframe<->gearbox -- must be clash-free.
+
+    Returns a list of ``{a, b, penetration_mm}`` records (empty => the vehicle is clean)."""
+    comps = components(p)
+    solids = {c["name"]: _component_solids(c) for c in comps}
+    voids = {c["name"]: _component_voids(c) for c in comps}
+    out: List[Dict[str, Any]] = []
+    for i in range(len(comps)):
+        for j in range(i + 1, len(comps)):
+            ca, cb = comps[i], comps[j]
+            if _is_eaxle_unit_pair(ca, cb):
+                continue
+            sa, sb = solids[ca["name"]], solids[cb["name"]]
+            if sa is None or sb is None:
+                continue
+            pen = clearance.solids_clash(sa, sb, voids[ca["name"]], voids[cb["name"]],
+                                         touch_tol)
+            if pen is not None:
+                out.append({"a": ca["name"], "b": cb["name"], "penetration_mm": pen})
+    return out
+
+
+# The bolted INTEGRATED E-AXLE / WHEEL-HUB unit -- the ONLY pairs the honest whole-vehicle
+# check (comprehensive_interpenetration_pairs) allows to overlap. These are genuinely one
+# assembled unit whose solids seat together by design:
+#   * gearbox<->motor       : the motor DE flange BOLTS to the gearbox motor flange and the
+#                             representative pinion/bearing envelopes seat inside the bell
+#                             housing (the established e-axle blank philosophy).
+#   * gearbox<->differential: the diff carrier seats INSIDE the gearbox housing (the gearbox
+#                             encloses + mounts the carrier, ICD §7.1).
+#   * driveline<->suspension: the wheel-hub flange seats in the upright HUB BORE -- the
+#                             driveline's OWN suspension hub at the same corner (the shared
+#                             ICD §2 datum). (Cross-axle driveline<->suspension is still
+#                             checked: a different-axle pair is never this unit.)
+# EVERY OTHER pair must be clash-free.
+_EAXLE_UNIT_PAIRS = frozenset(frozenset(pair) for pair in (
+    ("motor", "gearbox"),
+    ("gearbox", "differential"),   # role name placeholder; the diff lives inside driveline
+    ("gearbox", "driveline"),      # the gearbox output couples to / encloses the diff carrier
+    ("driveline", "suspension"),   # wheel-hub flange <-> upright hub bore (same corner only)
+))
+
+
+def _is_eaxle_unit_pair(ca: Dict[str, Any], cb: Dict[str, Any]) -> bool:
+    """True iff two components are the bolted INTEGRATED E-AXLE / WHEEL-HUB unit (the only
+    by-design solid overlap the honest check allows). Only SAME-AXLE parts qualify; a
+    cross-axle pair is never the same unit and is always checked."""
+    ax_a, ax_b = _axle_suffix(ca["name"]), _axle_suffix(cb["name"])
+    if ax_a and ax_b and ax_a != ax_b:
+        return False
+    return frozenset((ca["role"], cb["role"])) in _EAXLE_UNIT_PAIRS
+
+
 def _axle_suffix(name: str) -> str:
-    """The axle token a component name ends with (FRONT/REAR), '' if none."""
+    """The axle a component name belongs to: 'FRONT' or 'REAR', '' if none. Handles BOTH
+    the axle-suffixed names (DRIVELINE_REAR, GEARBOX_FRONT, SUBFRAME_REAR) AND the
+    suspension CORNER names (SUSPENSION_FL/FR -> FRONT, SUSPENSION_RL/RR -> REAR) so a
+    cross-axle pair (e.g. DRIVELINE_REAR vs SUSPENSION_FL) is correctly recognised as
+    different axles and never wrongly allowlisted as the same e-axle/hub unit."""
     for ax in ("FRONT", "REAR"):
         if name.endswith("_" + ax):
+            return ax
+    for suffix, ax in (("_FL", "FRONT"), ("_FR", "FRONT"), ("_RL", "REAR"), ("_RR", "REAR")):
+        if name.endswith(suffix):
             return ax
     return ""
 
@@ -1107,14 +1205,19 @@ def validate(p: VehicleParams) -> List[str]:
     # ===================================================================== #
     # ICD §7 -- INTEGRATION acceptance: no interpenetration + real matings   #
     # ===================================================================== #
-    # (a) HEADLINE: no two non-chassis component solids may interpenetrate.
+    # (a) HEADLINE (HONEST): the void-aware sampled-solid clash test run between EVERY
+    #     component pair INCLUDING the chassis (its axle notch + bores are real voids),
+    #     with only the bolted integrated e-axle/hub unit on the allowlist. This replaces
+    #     the older chassis-excluding / mating-skipping check that FALSE-PASSED while five
+    #     real clashes (half-shaft/diff into the rail, the subframe cradle into the control
+    #     arms, the cradle into the e-axle) sat in the assembled vehicle.
     try:
-        for hit in interpenetration_pairs(p):
+        for hit in comprehensive_interpenetration_pairs(p):
             pen = hit.get("penetration_mm", [0.0])
             issues.append(
                 "ICD §7.1 INTERPENETRATION: %s and %s overlap by %.1f mm solid -- the "
-                "components clash (raise the e-axle/gearbox offset or relieve the part)"
-                % (hit["a"], hit["b"], pen[0] if pen else 0.0))
+                "components clash (relieve the rail notch / reshape the subframe / raise "
+                "the e-axle offset)" % (hit["a"], hit["b"], pen[0] if pen else 0.0))
     except Exception as exc:                                   # pragma: no cover
         issues.append("could not run the ICD §7 interpenetration check: %s" % exc)
 
@@ -1391,7 +1494,7 @@ def report(p: VehicleParams) -> str:
     except Exception:
         pass
     try:
-        hits = interpenetration_pairs(p)
+        hits = comprehensive_interpenetration_pairs(p)
         if hits:
             lines.append("    interpenetration         : %d pair(s) CLASH" % len(hits))
             for h in hits:

@@ -372,6 +372,139 @@ def test_interpenetration_solid_is_tighter_than_whole_part_aabb():
     assert clearance.solids_interpenetrate(sa, sb) is None
 
 
+# ---- the HONEST whole-vehicle clash check (incl. chassis, void-aware) ------- #
+# The five REAL cross-component clashes the NX inspection confirmed (and that the old
+# chassis-excluding / mating-skipping interpenetration_pairs FALSE-PASSED):
+_REAL_CLASH_PAIRS = (
+    frozenset(("DRIVELINE_REAR", "CHASSIS")),     # half-shaft/diff pierced the rail beyond the notch
+    frozenset(("SUBFRAME_REAR", "SUSPENSION_RL")),  # cradle overlapped the control arms
+    frozenset(("SUBFRAME_FRONT", "SUSPENSION_FL")),
+    frozenset(("DRIVELINE_REAR", "SUBFRAME_REAR")), # diff/CV overlapped the cradle e-axle mounts
+    frozenset(("CHASSIS", "SUSPENSION_RL")),      # control arms clipped the rail (notch too small)
+)
+
+
+def test_comprehensive_check_is_clean_on_the_default_vehicle():
+    """HONEST whole-vehicle acceptance: the void-aware sampled-solid clash test run between
+    EVERY component pair INCLUDING the chassis (with only the bolted e-axle/hub unit on the
+    allowlist) finds NO clash on the fixed default vehicle."""
+    assert asm.comprehensive_interpenetration_pairs(VehicleParams()) == []
+
+
+def test_comprehensive_check_clears_every_real_clash_pair():
+    """Each of the five REAL clashes the NX inspection confirmed is now clear under the
+    honest check (the chassis axle notch was enlarged + extended into the crush cans; the
+    subframe cradle was lowered + reshaped to clear the arms + the e-axle)."""
+    pairs = {frozenset((h["a"], h["b"])) for h in asm.comprehensive_interpenetration_pairs(VehicleParams())}
+    for real in _REAL_CLASH_PAIRS:
+        assert real not in pairs, "%s still clashes" % set(real)
+
+
+def _chassis_solids_voids(chassis_params):
+    """The placed (identity at origin) chassis solids + voids for a given ChassisParams --
+    the same primitives the honest check builds, so a regression test can swap in a
+    notch-reverted chassis and prove the check would FIRE."""
+    from chassis_nx.blueprint import generate as c_generate
+    blue = c_generate(chassis_params)
+    R, o = asm.identity(), [0.0, 0.0, 0.0]
+    return clearance.part_solids(blue, R, o), clearance.part_voids(blue, R, o)
+
+
+def test_comprehensive_check_includes_the_chassis_and_fires_if_the_notch_is_reverted():
+    """The honest check EXAMINES the chassis (the old check excluded it -- exactly how the
+    half-shaft/arm-into-rail clashes hid). Prove BOTH directions on the rear axle:
+
+      * with the axle notch (the fix) the rear half-shaft + control arms CLEAR the rail; but
+      * reverting the notch (axle_notch=False) makes them PIERCE the rail solid -> the
+        void-aware clash test FIRES. This is the regression guard the user asked for.
+    """
+    from chassis_nx.params import ChassisParams
+    p = VehicleParams()
+    by = _by_name(asm.build_plan(p))
+    # the suspension RL + driveline solids placed in the vehicle (the swept members that
+    # cross the rail axle station)
+    sus = asm._component_solids(by["SUSPENSION_RL"])
+    drv = asm._component_solids(by["DRIVELINE_REAR"])
+
+    # WITH the notch (default chassis): both clear the rail
+    ok_s, ok_v = _chassis_solids_voids(ChassisParams())
+    assert clearance.solids_clash(sus, ok_s, [], ok_v) is None
+    assert clearance.solids_clash(drv, ok_s, [], ok_v) is None
+
+    # REVERT the notch -> the rail solid now has no relief window, so the arms + half-shaft
+    # pierce it and the clash test FIRES (the honest check would flag a CHASSIS pair).
+    bad_s, bad_v = _chassis_solids_voids(ChassisParams().overridden(**{"frame.axle_notch": False}))
+    assert clearance.solids_clash(sus, bad_s, [], bad_v) is not None
+    assert clearance.solids_clash(drv, bad_s, [], bad_v) is not None
+
+
+def _subframe_solids(sub_params, axle, origin):
+    from subframe_nx.blueprint import generate as s_generate
+    blue = s_generate(sub_params)
+    return clearance.part_solids(blue, asm.identity(), origin)
+
+
+def test_comprehensive_check_fires_if_the_subframe_intrudes_on_the_arms():
+    """Reverting the subframe cradle UP into the control-arm envelope (the old high base
+    plane) makes the cradle beams overlap the arms again -> the honest clash test FIRES on
+    the subframe<->suspension pair (the regression guard for the cradle clearance)."""
+    from subframe_nx.params import SubframeParams
+    p = VehicleParams()
+    by = _by_name(asm.build_plan(p))
+    sus = asm._component_solids(by["SUSPENSION_RL"])
+    axle_origin = by["SUBFRAME_REAR"]["origin_mm"]
+
+    # the fixed (low) cradle clears the arms
+    good = _subframe_solids(SubframeParams().overridden(axle="rear"), "rear", axle_origin)
+    assert clearance.solids_clash(sus, good) is None
+    # raising the cradle base plane back UP into the arm sweep re-introduces the clash
+    bad = _subframe_solids(
+        SubframeParams().overridden(**{"axle": "rear", "cradle.base_plane_z_mm": 250.0}),
+        "rear", axle_origin)
+    assert clearance.solids_clash(sus, bad) is not None
+
+
+def test_eaxle_unit_pairs_are_the_only_allowlisted_overlaps():
+    """The ONLY pairs the honest check skips are the bolted integrated e-axle / wheel-hub
+    unit (gearbox<->motor, gearbox<->driveline-diff, driveline<->its-own-suspension-hub).
+    Every OTHER pair -- especially subframe<->suspension, subframe<->chassis,
+    driveline<->chassis, suspension<->chassis -- is checked."""
+    p = VehicleParams()
+    comps = asm.components(p)
+    by = {c["name"]: c for c in comps}
+    # the e-axle unit pairs ARE skipped...
+    assert asm._is_eaxle_unit_pair(by["GEARBOX_REAR"], by["MOTOR_REAR"])
+    assert asm._is_eaxle_unit_pair(by["DRIVELINE_REAR"], by["SUSPENSION_RL"])
+    # ...but the policed cross-component pairs are NOT skipped
+    assert not asm._is_eaxle_unit_pair(by["SUBFRAME_REAR"], by["SUSPENSION_RL"])
+    assert not asm._is_eaxle_unit_pair(by["DRIVELINE_REAR"], by["CHASSIS"])
+    assert not asm._is_eaxle_unit_pair(by["SUBFRAME_REAR"], by["CHASSIS"])
+    # a CROSS-axle driveline<->suspension is NOT the unit either (different corners)
+    assert not asm._is_eaxle_unit_pair(by["DRIVELINE_REAR"], by["SUSPENSION_FL"])
+
+
+# ---- the void-aware clearance helper itself -------------------------------- #
+def test_solids_clash_void_lets_a_body_pass_through_a_bore():
+    """clearance.solids_clash treats a SUBTRACT void (a bore / the chassis axle notch) as
+    clearance: a pin passing through a bored block is NOT a clash, but the same pin hitting
+    the solid block (no bore) IS."""
+    block = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 50.0,
+         "origin3": (0.0, 0.0, 0.0), "axis": (0, 0, 1), "length": 40.0},
+        {"kind": "cylinder", "boolean": "subtract", "outer_radius": 20.0,
+         "origin3": (0.0, 0.0, -1.0), "axis": (0, 0, 1), "length": 42.0}]}
+    pin = {"build_steps": [
+        {"kind": "cylinder", "boolean": "create", "outer_radius": 8.0,
+         "origin3": (0.0, 0.0, -10.0), "axis": (0, 0, 1), "length": 60.0}]}
+    sb = clearance.part_solids(block, asm.identity(), [0.0, 0.0, 0.0])
+    vb = clearance.part_voids(block, asm.identity(), [0.0, 0.0, 0.0])
+    sp = clearance.part_solids(pin, asm.identity(), [0.0, 0.0, 0.0])
+    # void-aware: the pin runs through the Ø40 bore -> NO clash
+    assert clearance.solids_clash(sp, sb, [], vb) is None
+    # void-BLIND (no voids): the same pin overlaps the solid disc -> a clash
+    assert clearance.solids_clash(sp, sb, [], []) is not None
+
+
 # ---- mating coincidences (ICD §7.4.2) -------------------------------------- #
 def test_gearbox_output_and_diff_mount_lie_on_the_diff_axis():
     """The gearbox output coupling + diff-carrier mount are coaxial with the differential

@@ -102,6 +102,24 @@ def _z_layout(p: ChassisParams) -> Dict[str, float]:
     }
 
 
+def _axle_notch_band(p: ChassisParams) -> Dict[str, float]:
+    """The axle-notch relief window geometry (Z band + X half-width), shared by the rail
+    notch (frame_steps) and the crush-can notch (mount_steps) so the two halves of the
+    window line up. The relief reaches the FULL rail height (notch_top >= rail top) over
+    X = axle +- half_width."""
+    f = p.frame
+    z = _z_layout(p)
+    notch_top = max(f.axle_notch_top_mm, z["rail_top"] + 1.0)   # relieve the FULL rail height
+    notch_bottom = z["rail_bottom"] - 1.0                       # over-run below for a clean cut
+    return {
+        "half_width": f.axle_notch_half_width_mm,
+        "top": notch_top,
+        "bottom": notch_bottom,
+        "h": max(0.0, notch_top - notch_bottom),
+        "cz": 0.5 * (notch_bottom + notch_top),
+    }
+
+
 def rail_centreline_y(p: ChassisParams) -> float:
     """Lateral (Y) centre-line of the +Y rail (the -Y rail is its mirror): the rail
     sits just outboard of the inner channel, so its centre is
@@ -194,35 +212,38 @@ def frame_steps(p: ChassisParams) -> List[BuildStep]:
             sec_u=f.rail_width_mm, sec_v=f.rail_height_mm, wall=f.rail_wall_mm,
             color=COL_RAIL)
 
-    # AXLE NOTCH / kick-up relief: at each axle x-station (= the rail end) the
-    # suspension links and the driveline half-shaft sweep through the rail's Y/Z band
-    # at the hub-centre height. Cut a clearance WINDOW through the rail's lower/mid
-    # section, running INBOARD from the rail end over axle_notch_x_width and up to
-    # axle_notch_top_mm, so the corner + half-shaft envelope clears the rail (the rail
-    # arches over the axle, leaving a continuous bridge above the notch). Resolves the
-    # assembled-vehicle rail/arm + rail/half-shaft collisions.
-    if f.axle_notch and f.axle_notch_x_width_mm > 0:
-        notch_top = f.axle_notch_top_mm
-        notch_bottom = z["rail_bottom"] - 1.0          # over-run below so the cut is clean
-        notch_h = max(0.0, notch_top - notch_bottom)
-        notch_cz = 0.5 * (notch_bottom + notch_top)
-        # axle stations are the rail ends; the window runs INBOARD (toward x=0).
-        for axle, end_x, inboard in (("front", +f.wheelbase_mm / 2.0, -1.0),
-                                     ("rear", -f.wheelbase_mm / 2.0, +1.0)):
-            # X window from the rail end inboard by axle_notch_x_width (a touch beyond
-            # the end so the corner of the rail is fully opened)
-            x0 = min(end_x, end_x + inboard * f.axle_notch_x_width_mm)
+    # AXLE NOTCH / relief: at each axle x-station the suspension control arms, toe link,
+    # anti-roll link/damper AND the driveline half-shaft sweep through the rail's Y band
+    # running from the inboard pickups out to the wheel hub, reaching the FULL rail height
+    # and into the abutting crush-can overhang. Cut a FULL-SECTION clearance WINDOW
+    # centred on the axle x-station -- relieving the rail (here) and the crush-can end (in
+    # mount_steps, after the cans are created) over X = axle +- axle_notch_half_width up to
+    # axle_notch_top_mm -- so the whole corner + half-shaft envelope passes through the open
+    # axle bay. The rail stays structurally continuous through the battery tray +
+    # crossmembers; the subframe pads sit just inboard of the window. Resolves the rail/arm
+    # + rail/half-shaft + crush-can/arm collisions the NX inspection found. The INBOARD
+    # half subtracts from the rail (this cut overlaps the rail solid, so NX leaves one
+    # clean body).
+    if f.axle_notch and f.axle_notch_half_width_mm > 0:
+        nb = _axle_notch_band(p)
+        for axle, axle_x in (("front", +f.wheelbase_mm / 2.0),
+                             ("rear", -f.wheelbase_mm / 2.0)):
             for tag, sign in (("l", -1.0), ("r", +1.0)):
-                rid = "rail_%s" % tag
+                cy = sign * rail_cy
+                # INBOARD half -> relieve the RAIL (from the axle station toward x=0).
+                # The rail spans [-wb/2, +wb/2]; the front axle is its +X end and the rear
+                # axle its -X end, so the inboard direction is -X (front) / +X (rear).
+                rail_inboard = -1.0 if axle == "front" else +1.0
+                rail_x0 = min(axle_x, axle_x + rail_inboard * nb["half_width"])
                 steps.append(BuildStep(
                     id="axle_notch_%s_%s" % (axle, tag), role="axle_notch_cut",
-                    kind="prism", boolean="subtract", target=rid,
+                    kind="prism", boolean="subtract", target="rail_%s" % tag,
                     body_name="Axle_Notch_%s_%s" % (axle.upper(), tag.upper()),
                     material="air", color=COL_AIR,
-                    profile=_rect_uv(f.rail_width_mm / 2.0 + 1.0, notch_h / 2.0),
-                    origin3=(x0, sign * rail_cy, notch_cz),
+                    profile=_rect_uv(f.rail_width_mm / 2.0 + 1.0, nb["h"] / 2.0),
+                    origin3=(rail_x0, cy, nb["cz"]),
                     axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0),
-                    length=f.axle_notch_x_width_mm))
+                    length=nb["half_width"]))
 
     # lateral crossmembers -- hollow box beams running along +Y that BRIDGE the rails.
     # Each spans the inner channel plus a small embed into both rails, so the ends land
@@ -392,6 +413,31 @@ def mount_steps(p: ChassisParams) -> List[BuildStep]:
                     axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0), length=can_len,
                     sec_u=f.rail_width_mm, sec_v=f.rail_height_mm,
                     wall=f.rail_wall_mm, color=COL_CRUSH)
+
+    # AXLE NOTCH (crush-can half): relieve the OUTBOARD half of the axle window from the
+    # crush-can END (now that the cans exist), so the corner + half-shaft envelope that
+    # spills past the axle into the overhang clears the can too. Each cut overlaps the can
+    # solid at its inboard end -> NX leaves one clean can body. The rail half is cut in
+    # frame_steps; the two halves share _axle_notch_band so they line up.
+    if f.axle_notch and f.axle_notch_half_width_mm > 0 and can_len > 0:
+        nb = _axle_notch_band(p)
+        for axle, axle_x, fitted in (("front", +f.wheelbase_mm / 2.0, bm.crush_can_front),
+                                     ("rear", -f.wheelbase_mm / 2.0, bm.crush_can_rear)):
+            if not fitted:
+                continue
+            can_outboard = +1.0 if axle == "front" else -1.0
+            cut_len = min(nb["half_width"], can_len)
+            can_x0 = min(axle_x, axle_x + can_outboard * cut_len)
+            for side, sign in (("l", -1.0), ("r", +1.0)):
+                steps.append(BuildStep(
+                    id="axle_notch_can_%s_%s" % (axle, side), role="axle_notch_cut",
+                    kind="prism", boolean="subtract", target="crush_%s_%s" % (axle, side),
+                    body_name="Axle_Notch_Can_%s_%s" % (axle.upper(), side.upper()),
+                    material="air", color=COL_AIR,
+                    profile=_rect_uv(f.rail_width_mm / 2.0 + 1.0, nb["h"] / 2.0),
+                    origin3=(can_x0, sign * rail_cy, nb["cz"]),
+                    axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0),
+                    length=cut_len))
     return steps
 
 

@@ -369,37 +369,52 @@ def _step(blue, sid):
 
 
 def _cyl_centre(step):
-    """Local centre of an axis-placed cylinder = origin3 + axis * length/2."""
+    """Local centre of an axis-placed cylinder = origin3 + unit(axis) * length/2. Handles
+    both a unit axis (length is the real length) and a stored full-delta axis (length =
+    |axis|, as the pin bores use) by normalising the axis first."""
     o, a, L = step["origin3"], step["axis"], step["length"]
-    return tuple(o[i] + a[i] * L / 2.0 for i in range(3))
+    n = math.sqrt(sum(c * c for c in a)) or 1.0
+    return tuple(o[i] + (a[i] / n) * L / 2.0 for i in range(3))
 
 
 def test_pickup_bosses_land_on_the_hardpoints():
-    """Every pickup boss centre must sit on its suspension inboard hardpoint
+    """Every pickup PIN BORE centre must sit on its suspension inboard hardpoint
     (ICD §7.4.2: the suspension arm inboard end bolts here -- no floating arm).
 
-    The boss now UNITES onto the one welded cradle body (it is no longer a standalone
-    create -- that would re-introduce the interference the redesign removed), so the boss
-    placement is read off its unite step regardless of boolean. The pin-bore centre stays
-    EXACTLY at the hardpoint, so check_corners.py / subframe_point_world are unaffected."""
+    The pickup is now a CLEVIS -- two ear plates straddling the suspension bushing eye,
+    with ONE +X pin bore through both ears centred on the hardpoint (the eye sits in the
+    clear gap between the ears). The pin-BORE centre is the preserved contract (it stays
+    EXACTLY on the hardpoint, so check_corners.py / subframe_point_world are unaffected);
+    the bore is the +X cylinder ``pickup_boss_<nm>_<side>_bore``, whose mid-point is the
+    hardpoint. (The clevis ears are symmetric about the hardpoint, so the bore centre is
+    the joint centre.)"""
     p = SubframeParams()
     blue = bp.generate(p)
     for side in ("l", "r"):
         hp = p.hardpoints_local(side)
         for nm in ("lower_pickup_fore", "lower_pickup_aft", "upper_pickup_fore",
                    "upper_pickup_aft", "toe_pickup"):
-            c = _cyl_centre(_step(blue, "pickup_boss_%s_%s" % (nm, side)))
+            c = _cyl_centre(_step(blue, "pickup_boss_%s_%s_bore" % (nm, side)))
             assert c == pytest.approx(hp[nm], abs=1e-6), "boss %s_%s off hardpoint" % (nm, side)
 
 
-def test_tower_seat_sits_at_the_damper_top():
-    """The shock-tower seat lower face must land at the damper/strut-top hardpoint so
-    the spring/damper top is supported (no floating spring, ICD §7.2)."""
+def test_tower_seat_supports_the_damper_top():
+    """The shock-tower seat must support the suspension damper/strut top (no floating
+    spring, ICD §7.2). The seat lower face sits a small STANDOFF directly ABOVE the
+    damper-top hardpoint (in X/Y on the hardpoint, in Z just clear of the suspension's own
+    damper top-mount cap so the top mount bolts UP into it as a face touch -- not a buried
+    overlap). The reported tower MATING point (subframe_point_world 'tower'/'damper_top')
+    reads the hardpoint, so this standoff does not move the mating datum."""
     p = SubframeParams()
     blue = bp.generate(p)
     for side in ("l", "r"):
         seat = _step(blue, "tower_seat_%s" % side)
-        assert tuple(seat["origin3"]) == pytest.approx(p.hardpoints_local(side)["damper_top"], abs=1e-6)
+        hp = p.hardpoints_local(side)["damper_top"]
+        # on the hardpoint in X/Y; a small standoff above it in Z
+        assert seat["origin3"][0] == pytest.approx(hp[0], abs=1e-6)
+        assert seat["origin3"][1] == pytest.approx(hp[1], abs=1e-6)
+        assert seat["origin3"][2] == pytest.approx(hp[2] + p.tower.seat_standoff_mm, abs=1e-6)
+        assert seat["origin3"][2] > hp[2]      # the seat is ABOVE the damper top (caps it)
 
 
 def test_pad_flanges_land_on_chassis_pad_stations():

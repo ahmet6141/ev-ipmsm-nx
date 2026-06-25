@@ -377,54 +377,81 @@ _PICKUP_NAMES = ("lower_pickup_fore", "lower_pickup_aft",
 
 
 def boss_steps(p: SubframeParams) -> List[BuildStep]:
-    """A suspension PICKUP EAR at every inboard hardpoint, both sides: a tapered cast ear
-    blends UP from the inboard stringer to the hardpoint, ending in a cylindrical boss
-    (axis fore/aft, +X) whose cross bore takes the control-arm / toe-link bushing pin. The
-    ear + boss UNITE onto the one cradle body; the pin bore SUBTRACTS from it. The boss is
-    an integrated ear, not a stuck-on lump.
+    """A suspension PICKUP CLEVIS at every inboard hardpoint, both sides: TWO coaxial ear
+    plates (axis fore/aft, +X) straddling the suspension bushing eye, with a clear axial
+    GAP between them where the eye sits, and a single bored pin through both ears. The
+    suspension arm eye sits in the gap; the two solids are SEPARATED ALONG the pin axis
+    and bridged only by the bolt in the (clear) bore -- exactly the suspension's own
+    clevis/lap convention, so the subframe and the arm never share volume.
 
-    The boss placement (a +X cylinder centred on the hardpoint) is preserved exactly -- the
-    pin-bore centre stays at the suspension hardpoint, so the four-corner coincidence
-    (check_corners.py) and subframe_point_world(...,'pickup',...) are unaffected by the
-    unification. The boss UNITES onto the weldment (it is not a separate create body), so no
-    second solid overlaps it."""
+    A tapered ear blends UP/OUT from the LOW inboard stringer to each clevis ear, so the
+    clevis is carried by the perimeter (load path: pin -> ear -> stringer -> crossbeam ->
+    pad -> chassis). Everything UNITES onto the one cradle body; the pin bore SUBTRACTS.
+
+    THE CONTRACT (preserved exactly): the pin-bore CENTRE stays on the suspension hardpoint
+    -- the bore runs +X through the hardpoint, centred on it. So check_corners.py and
+    subframe_point_world(...,'pickup',...) (which read the hardpoint, not the ear geometry)
+    are unaffected. The ears are offset symmetrically ABOUT the hardpoint, leaving the
+    hardpoint itself in the clear gap where the eye lives."""
     b = p.boss
     c = p.cradle
     steps: List[BuildStep] = []
-    half = b.boss_length_mm / 2.0
-    stringer_centre_z = c.base_plane_z_mm
+    half_gap = b.ear_gap_mm / 2.0
+    ear_t = b.ear_thickness_mm
+    base_z = c.base_plane_z_mm
+    leg_d = b.boss_diameter_mm * 0.7        # thin tie leg (slimmer than the ear OD)
     for side in ("l", "r"):
         hp = p.hardpoints_local(side)
+        sy = math.copysign(c.stringer_y_mm, hp["lower_pickup_fore"][1])   # signed stringer Y
         for nm in _PICKUP_NAMES:
             x, y, z = hp[nm]
             bid = "pickup_boss_%s_%s" % (nm, side)
-            # 1) tapered EAR from the inboard stringer up to the hardpoint. Root inside the
-            #    stringer box (overlaps it -> connected unite); tip at the pickup. The ear's
-            #    +Y position runs from the stringer band to the pickup |Y| so it blends in.
-            root = (x, math.copysign(c.stringer_y_mm, y), stringer_centre_z - c.beam_height_mm * 0.25)
-            tip = (x, y, z)
-            if _norm(_sub(tip, root)) > 1.0:
-                _tapered_ear(steps, "%s_ear" % bid, "pickup_ear",
-                             "Pickup_Ear_%s_%s" % (nm.upper(), side.upper()),
-                             root, tip, b.boss_diameter_mm * 1.15, b.boss_diameter_mm,
-                             c.beam_height_mm, b.boss_diameter_mm * 0.9,
-                             COL_BOSS, u_dir=(1.0, 0.0, 0.0), target=CRADLE)
-            # 2) the bored boss, axis +X, centred on the hardpoint (start half-length back so
-            #    its mid-point IS the hardpoint). UNITED into the weldment (the ear above
-            #    reaches the boss, so the boss overlaps the cradle through the ear -> one
-            #    connected solid). The cylinder placement (origin3/axis/length) IS the
-            #    contract the tests + assembly accessors read for the pin-bore centre.
-            steps.append(BuildStep(
-                id=bid, role="pickup_boss", kind="cylinder", boolean="unite", target=CRADLE,
-                body_name="Pickup_Boss_%s_%s" % (nm.upper(), side.upper()),
-                material="aluminium", color=COL_BOSS,
-                outer_radius=b.boss_diameter_mm / 2.0, length=b.boss_length_mm,
-                origin3=(x - half, y, z), axis=(1.0, 0.0, 0.0)))
-            # 3) cross bore through the boss along its axis (pin / bushing-bolt clearance),
-            #    SUBTRACTED from the weldment.
+            # APPROACH ROUTING (the fix for the clevis-leg-through-the-arm clash): the
+            # control arm leaves each pickup going OUTBOARD (+|Y|) and slightly down, so the
+            # tie legs must reach the pickup from INBOARD, NOT sweep through the outboard arm
+            # space. Route each ear from the low inboard stringer in TWO thin segments:
+            #   (1) a vertical RISER at the stringer |Y| (inboard of every arm) up to the
+            #       pickup Z, then
+            #   (2) a short lateral EAR at the pickup Z out to the clevis.
+            # Both segments stay at |Y| <= the pickup, where the arm is not, so the subframe
+            # never shares volume with the swept arm.
+            # the two clevis ears: thin +X discs centred at x +- (half_gap + ear_t/2), so
+            # their INNER faces are at x +- half_gap (the clear gap = ear_gap_mm spans the
+            # eye + bolt head/nut). Each ear gets its OWN riser AT THE EAR X (the fore/aft
+            # offset), so the tie legs run at x = ear_c -- well clear of the bushing-eye
+            # (which sits at the hardpoint X +- ~17 mm in the clevis gap). Routing the legs
+            # at the hardpoint X would drive them straight through the eye.
+            for tag, sgn in (("near", -1.0), ("far", +1.0)):
+                ear_c = x + sgn * (half_gap + ear_t / 2.0)         # ear centre X
+                ear_base = ear_c - ear_t / 2.0                     # ear -X face (cylinder base)
+                riser_top = (ear_c, sy, z)                         # at the ear X, stringer Y, pickup Z
+                # (1) vertical riser at the EAR X from the stringer box up to the pickup Z
+                #     (UNITES; its foot overlaps the stringer box -> connected).
+                _united_cyl(steps, "%s_%s_riser" % (bid, tag), "pickup_ear",
+                            "Pickup_Riser_%s_%s_%s" % (nm.upper(), tag.upper(), side.upper()),
+                            (ear_c, sy, base_z - c.beam_height_mm * 0.25), riser_top,
+                            leg_d, COL_BOSS, CRADLE)
+                # (2) short lateral EAR leg at the ear X, from the riser top out to the ear
+                #     centre (ear_c, y, z), at the constant pickup Z (above the arm).
+                _united_cyl(steps, "%s_%s_leg" % (bid, tag), "pickup_ear",
+                            "Pickup_Ear_%s_%s_%s" % (nm.upper(), tag.upper(), side.upper()),
+                            riser_top, (ear_c, y, z), leg_d, COL_BOSS, CRADLE)
+                # the ear plate itself: a short +X cylinder, UNITED into the weldment (the
+                # lateral leg above reaches it -> one connected solid).
+                steps.append(BuildStep(
+                    id="%s_%s" % (bid, tag), role="pickup_boss", kind="cylinder",
+                    boolean="unite", target=CRADLE,
+                    body_name="Pickup_Ear_%s_%s_%s" % (nm.upper(), tag.upper(), side.upper()),
+                    material="aluminium", color=COL_BOSS,
+                    outer_radius=b.boss_diameter_mm / 2.0, length=ear_t,
+                    origin3=(ear_base, y, z), axis=(1.0, 0.0, 0.0)))
+            # the pin bore: ONE +X through-bore across BOTH ears, centred on the hardpoint
+            # (the preserved contract). The eye + its bolt head/nut occupy the clear gap.
+            x0 = x - (half_gap + ear_t) - 0.5
+            x1 = x + (half_gap + ear_t) + 0.5
             _bore(steps, "%s_bore" % bid, "pickup_bore_cut",
                   "Pickup_Bore_%s_%s" % (nm.upper(), side.upper()),
-                  (x - half - 0.5, y, z), (x + half + 0.5, y, z), b.bore_diameter_mm)
+                  (x0, y, z), (x1, y, z), b.bore_diameter_mm)
     return steps
 
 
@@ -443,35 +470,65 @@ def tower_steps(p: SubframeParams) -> List[BuildStep]:
     c = p.cradle
     steps: List[BuildStep] = []
     base_z = c.base_plane_z_mm
+    # the spring/damper occupy local x ~ +-26 and the half-shaft runs along the axle at
+    # local x ~ 0, z ~ 335; route the tower riser at this fore/aft OFFSET so it climbs CLEAR
+    # of both, then leans IN to the damper-top seat. The riser also sits INBOARD (at the
+    # stringer |Y|) of the spring coils (|Y| >= ~383) until it is above them.
+    x_off = tw.post_diameter_mm / 2.0 + 30.0     # fore offset clear of the spring/half-shaft
+    # climb the vertical riser CLEAR ABOVE the spring + its upper perch (top ~z 630) before
+    # leaning in to the seat, so the leaning brace never crosses the spring/perch/top-mount.
+    damper_z = p.hardpoints_local("l")["damper_top"][2]
+    z_above_spring = min(damper_z - 8.0, 645.0)
     for side in ("l", "r"):
         hp = p.hardpoints_local(side)
         tx, ty, tz = hp["damper_top"]
-        # the tower foot sits on the inboard stringer (|Y| = stringer_y) and the turret leans
-        # out to the damper top so it BLENDS into the perimeter rather than floating inboard.
-        foot = (tx, math.copysign(c.stringer_y_mm, ty), base_z - c.beam_height_mm / 2.0)
+        sy = math.copysign(c.stringer_y_mm, ty)
         tid = "tower_post_%s" % side
-        # 1) the turret POST: a leaning solid cylinder from the stringer up to just under the
-        #    seat. United into the weldment (its foot overlaps the stringer box).
-        seat_bottom = (tx, ty, tz)
+        # 1) the turret in TWO segments that dodge the spring + half-shaft:
+        #    (1a) a near-VERTICAL riser at a fore offset (tx + x_off) and the inboard stringer
+        #         |Y|, from the stringer box up to above the spring top; then
+        #    (1b) a leaning brace from there IN to the seat bottom at the damper-top hardpoint.
+        # the seat CAPS the turret from ABOVE the suspension damper top-mount: its lower
+        # face sits at the damper-top hardpoint Z, just clear of the top-mount top, so the
+        # top mount bolts UP into it (a TOUCH). The damper rod passes up through the seat's
+        # rod bore (a void). The post reaches the seat's INBOARD RIM (inboard of the Ø top
+        # mount) so the leaning brace never crosses the top-mount cylinder.
+        # the seat sits a small STANDOFF ABOVE the damper-top hardpoint so its lower face
+        # clears the suspension's own damper TOP MOUNT (whose cap reaches ~14 mm above the
+        # hardpoint): the top mount bolts UP into the seat as a face TOUCH, not a buried
+        # overlap. The reported tower point (subframe_point_world 'tower') reads the
+        # hardpoint, so this standoff does NOT move the mating datum.
+        seat_z = tz + tw.seat_standoff_mm                       # seat lower face, above the top mount
+        seat_r = tw.seat_diameter_mm / 2.0
+        # the seat INBOARD rim (toward y=0) -- the post lands here so the leaning brace stays
+        # INBOARD of the suspension damper top-mount cylinder (which is centred on the damper
+        # axis at ty). Inboard = toward 0, i.e. -sign(ty); works for BOTH sides.
+        inboard = -1.0 if ty > 0 else 1.0
+        rim_y = ty + inboard * (seat_r - tw.post_diameter_mm / 2.0)
+        foot = (tx + x_off, sy, base_z - c.beam_height_mm / 2.0)
+        knee = (tx + x_off, sy, z_above_spring)
+        seat_rim = (tx, rim_y, seat_z + tw.seat_thickness_mm / 2.0)  # land on the seat inboard rim
+        _united_cyl(steps, "%s_riser" % tid, "shock_tower", "Shock_Tower_%s" % side.upper(),
+                    foot, knee, tw.post_diameter_mm, COL_TOWER, CRADLE)
         _united_cyl(steps, tid, "shock_tower", "Shock_Tower_%s" % side.upper(),
-                    foot, seat_bottom, tw.post_diameter_mm, COL_TOWER, CRADLE)
-        # 2) top SEAT plate capping the turret AT the damper-top hardpoint (its lower face at
-        #    tz -> the top mount lands there). origin3 = the hardpoint (preserved contract).
+                    knee, seat_rim, tw.post_diameter_mm, COL_TOWER, CRADLE)
+        # 2) top SEAT plate capping the turret just above the damper top mount.
         sid = "tower_seat_%s" % side
         steps.append(BuildStep(
             id=sid, role="tower_seat", kind="cylinder", boolean="unite", target=CRADLE,
             body_name="Tower_Seat_%s" % side.upper(),
             material="aluminium", color=COL_TOWER,
             outer_radius=tw.seat_diameter_mm / 2.0, length=tw.seat_thickness_mm,
-            origin3=(tx, ty, tz), axis=(0.0, 0.0, 1.0)))
-        # 3) damper-rod / top-mount clearance bore down through the seat + into the post
+            origin3=(tx, ty, seat_z), axis=(0.0, 0.0, 1.0)))
+        # 3) damper-rod / top-mount clearance bore down through the seat (the rod + top-mount
+        #    stud pass up through it -- a void, not metal).
         steps.append(BuildStep(
             id="%s_bore" % sid, role="tower_bore_cut", kind="cylinder",
             boolean="subtract", target=CRADLE,
             body_name="Tower_Bore_%s" % side.upper(), material="air", color=COL_AIR,
             outer_radius=tw.rod_bore_diameter_mm / 2.0,
-            length=tw.seat_thickness_mm + 30.0,
-            origin3=(tx, ty, tz - 30.0), axis=(0.0, 0.0, 1.0)))
+            length=tw.seat_thickness_mm + 40.0,
+            origin3=(tx, ty, seat_z - 40.0), axis=(0.0, 0.0, 1.0)))
         # 4) top-mount bolt circle through the seat plate (fastens the damper top mount)
         if tw.bolt_count > 0 and tw.bolt_diameter_mm > 0:
             pcd_r = max(tw.bolt_diameter_mm,
@@ -486,7 +543,7 @@ def tower_steps(p: SubframeParams) -> List[BuildStep]:
                     body_name="Tower_Bolt_%s_%d" % (side.upper(), k),
                     material="air", color=COL_AIR,
                     outer_radius=tw.bolt_diameter_mm / 2.0,
-                    cx=hx, cy=hy, z0=tz + tw.seat_thickness_mm + 0.5,
+                    cx=hx, cy=hy, z0=seat_z + tw.seat_thickness_mm + 0.5,
                     axis=(0.0, 0.0, -1.0), length=tw.seat_thickness_mm + 1.0))
     return steps
 
@@ -522,10 +579,16 @@ def eaxle_steps(p: SubframeParams) -> List[BuildStep]:
         for side, sign in (("l", +1.0), ("r", -1.0)):
             my = sign * ea.mount_y_mm
             bid = "eaxle_mount_%d_%s" % (i, side)
-            top = (mx, my, ea.mount_z_mm + ea.boss_height_mm)
-            bot = (mx, my, ea.mount_z_mm)
+            # mount_z_mm is the carrier mount-boss TOP FACE -- placed JUST BELOW the
+            # gearbox/diff housing bottom at this station so the carrier seats on it as a
+            # TOUCH, not a clash (the old boss topped at z+boss_h, buried deep IN the
+            # housing). The boss rises from below up to that face; the |Y| sits OUTBOARD of
+            # the diff/CV envelope so the bracket never enters the e-axle.
+            top_face = ea.mount_z_mm
+            bot = (mx, my, top_face - ea.boss_height_mm)
+            top = (mx, my, top_face)
             # 1) hanger BRACKET: a slim prism from the crossbeam (at x_anchor, |Y|=my, the
-            #    base plane) across to the boss top, so the boss is carried by the perimeter.
+            #    base plane) UP to the boss, so the boss is carried by the perimeter.
             anchor = (x_anchor, my, base_z)
             if _norm(_sub(top, anchor)) > 1.0:
                 _tapered_ear(steps, "%s_arm" % bid, "eaxle_arm",
@@ -533,8 +596,8 @@ def eaxle_steps(p: SubframeParams) -> List[BuildStep]:
                              anchor, top, c.beam_height_mm * 0.8, ea.boss_diameter_mm * 0.8,
                              c.beam_width_mm * 0.8, ea.boss_diameter_mm * 0.8,
                              COL_EAXLE, u_dir=(0.0, 0.0, 1.0), target=CRADLE)
-            # 2) a +Z mount boss the diff/gearbox bolts down onto. UNITED into the weldment
-            #    (the bracket arm above reaches it, so it overlaps the cradle -> one solid).
+            # 2) a +Z mount boss whose TOP FACE the diff/gearbox carrier bolts down onto.
+            #    UNITED into the weldment (the bracket arm above reaches it -> one solid).
             steps.append(BuildStep(
                 id=bid, role="eaxle_mount", kind="cylinder", boolean="unite", target=CRADLE,
                 body_name="EAxle_Mount_%d_%s" % (i, side.upper()),
@@ -544,7 +607,7 @@ def eaxle_steps(p: SubframeParams) -> List[BuildStep]:
             # 3) carrier bolt bore down the boss axis, SUBTRACTED from the weldment.
             _bore(steps, "%s_bore" % bid, "eaxle_bolt_cut",
                   "EAxle_Bolt_%d_%s" % (i, side.upper()),
-                  (mx, my, ea.mount_z_mm - 0.5), (mx, my, ea.mount_z_mm + ea.boss_height_mm + 0.5),
+                  (mx, my, top_face - ea.boss_height_mm - 0.5), (mx, my, top_face + 0.5),
                   ea.bolt_diameter_mm)
     return steps
 

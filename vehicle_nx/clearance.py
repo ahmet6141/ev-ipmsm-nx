@@ -289,17 +289,25 @@ _AXIAL_STATIONS = 9       # along the body length (incl. both ends)
 _ANGULAR_SPOKES = 16      # around a round cross-section
 
 
-def _world_body(s: Dict[str, Any], R: Mat, origin: Vec) -> Optional[Dict[str, Any]]:
-    """A placed create/unite body as an oriented solid PRIMITIVE in vehicle coordinates,
+def _world_body(s: Dict[str, Any], R: Mat, origin: Vec,
+                include_subtract: bool = False) -> Optional[Dict[str, Any]]:
+    """A placed build-step body as an oriented solid PRIMITIVE in vehicle coordinates,
     plus a DENSE list of sampled surface points (lateral surface at several axial
-    stations + both end caps). Returns None for subtract bodies / unknowns.
+    stations + both end caps).
+
+    By default returns None for ``subtract`` bodies (they remove material, so they are
+    not part of the solid envelope). Pass ``include_subtract=True`` to build the
+    primitive for a subtract body too -- the VOID-aware clash test (``part_voids`` /
+    ``solids_clash``) needs the bore / notch / cavity geometry so a neighbour passing
+    THROUGH a real subtracted void (the chassis axle notch, a bolt clearance bore) is
+    not falsely flagged as a clash.
 
     Primitive kinds:
       * "cyl"     : finite cylinder -- base point, unit axis, radius, length.
       * "poly"    : swept closed polygon -- base point, unit axis, length, and the
                     polygon vertices in the section's local (u, v) frame + that frame.
     """
-    if s.get("boolean") == "subtract":
+    if s.get("boolean") == "subtract" and not include_subtract:
         return None
 
     kind = s.get("kind")
@@ -488,6 +496,28 @@ def part_solids(blueprint: Dict[str, Any], R: Mat, origin: Vec) -> List[Dict[str
     return out
 
 
+def part_voids(blueprint: Dict[str, Any], R: Mat, origin: Vec) -> List[Dict[str, Any]]:
+    """Every SUBTRACT body of a placed blueprint as an oriented vehicle-frame primitive
+    (a real material VOID: a bore, a bolt clearance hole, the chassis axle NOTCH, a
+    hollow-box cavity). The void-aware clash test (:func:`solids_clash`) treats a point
+    that lies inside a part's solid AND inside one of its voids as NOT solid -- so a
+    neighbour that passes THROUGH a relief notch / clearance bore (an intended path, not
+    metal) is not falsely flagged as interpenetration.
+
+    A primitive is bounded by its outer envelope, so a void over-removes only at a
+    rounded corner of a rectangular cut -- conservative for a clash test (it can only
+    UNDER-report a clash near a void edge, never invent clearance where there is metal
+    beyond the cut envelope)."""
+    out: List[Dict[str, Any]] = []
+    for s in blueprint.get("build_steps", []):
+        if s.get("boolean") != "subtract":
+            continue
+        b = _world_body(s, R, origin, include_subtract=True)
+        if b is not None:
+            out.append(b)
+    return out
+
+
 def solids_interpenetrate(solids_a: List[Dict[str, Any]],
                           solids_b: List[Dict[str, Any]],
                           touch_tol: float = TOUCH_TOL_MM) -> Optional[List[float]]:
@@ -546,6 +576,86 @@ def solids_interpenetrate(solids_a: List[Dict[str, Any]],
                         depth = _penetration_depth(pt, body)
                         if depth > worst:
                             worst = depth
+    return [round(worst, 2)] if found else None
+
+
+def _point_in_any(pt, bodies, tol: float) -> bool:
+    return any(_point_in_body(pt, b, tol) for b in bodies)
+
+
+def solids_clash(solids_a: List[Dict[str, Any]],
+                 solids_b: List[Dict[str, Any]],
+                 voids_a: Optional[List[Dict[str, Any]]] = None,
+                 voids_b: Optional[List[Dict[str, Any]]] = None,
+                 touch_tol: float = TOUCH_TOL_MM) -> Optional[List[float]]:
+    """VOID-AWARE interpenetration test between two parts. Like
+    :func:`solids_interpenetrate`, but a sampled surface point of part A is counted as a
+    real clash with part B ONLY if it lies inside a SOLID body of B by more than
+    ``touch_tol`` AND NOT inside any VOID of B (a bore / cavity / the chassis axle notch)
+    -- and the point itself must be real metal of A (inside no void of A). So a half-shaft
+    or control arm that passes THROUGH the rail's notch window, or a bolt sitting in a
+    clearance bore, is correctly NOT a clash.
+
+    Returns the deepest penetration as a 1-element list ``[depth_mm]`` for reporting, or
+    None if the parts clear. The ``voids_*`` default to empty (then this is exactly
+    :func:`solids_interpenetrate`)."""
+    if not solids_a or not solids_b:
+        return None
+    va = voids_a or []
+    vb = voids_b or []
+
+    # whole-part AABB pre-filter over the sampled SOLID points
+    def _aabb(solids):
+        lo = [math.inf] * 3
+        hi = [-math.inf] * 3
+        for s in solids:
+            for p in s["sample"]:
+                for i in range(3):
+                    lo[i] = min(lo[i], p[i])
+                    hi[i] = max(hi[i], p[i])
+        return lo, hi
+    aa, bb = _aabb(solids_a), _aabb(solids_b)
+    if any(min(aa[1][i], bb[1][i]) - max(aa[0][i], bb[0][i]) < -touch_tol for i in range(3)):
+        return None
+
+    def _body_aabb(body):
+        lo = [math.inf] * 3
+        hi = [-math.inf] * 3
+        for p in body["sample"]:
+            for i in range(3):
+                lo[i] = min(lo[i], p[i])
+                hi[i] = max(hi[i], p[i])
+        return lo, hi
+    box_a = [_body_aabb(s) for s in solids_a]
+    box_b = [_body_aabb(s) for s in solids_b]
+
+    def _box_overlap(ba, bb_):
+        return all(min(ba[1][i], bb_[1][i]) - max(ba[0][i], bb_[0][i]) >= -touch_tol
+                   for i in range(3))
+
+    worst = 0.0
+    found = False
+    for src, sboxes, src_voids, dst, dboxes, dst_voids in (
+            (solids_a, box_a, va, solids_b, box_b, vb),
+            (solids_b, box_b, vb, solids_a, box_a, va)):
+        for s, sbox in zip(src, sboxes):
+            cand = [body for body, dbox in zip(dst, dboxes) if _box_overlap(sbox, dbox)]
+            if not cand:
+                continue
+            for pt in s["sample"]:
+                # the source point must be real metal of its own part (not in a void of A)
+                if src_voids and _point_in_any(pt, src_voids, -touch_tol):
+                    continue
+                for body in cand:
+                    if not _point_in_body(pt, body, touch_tol):
+                        continue
+                    # the destination point must be real metal of B (not inside a B void)
+                    if dst_voids and _point_in_any(pt, dst_voids, -touch_tol):
+                        continue
+                    found = True
+                    depth = _penetration_depth(pt, body)
+                    if depth > worst:
+                        worst = depth
     return [round(worst, 2)] if found else None
 
 

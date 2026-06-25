@@ -145,9 +145,11 @@ def derive(p: SubframeParams) -> DerivedSubframe:
     seat_vol = math.pi * (tw.seat_diameter_mm / 2.0) ** 2 * tw.seat_thickness_mm
     tower_mass = 2.0 * (tower_post_vol + seat_vol) * mm3_to_m3 * rho
 
-    # pickup bosses (solid cylinder per hardpoint, both sides) + e-axle mount bosses
+    # pickup clevises (TWO ear plates per hardpoint, both sides) + e-axle mount bosses.
+    # The clevis is two ears each Ø boss_diameter x ear_thickness (the pin/eye sits in the
+    # clear gap between them, not metal), so the boss material is 2 ear discs per pickup.
     n_pickups = 5                               # lower fore/aft, upper fore/aft, toe
-    boss_vol = math.pi * (boss.boss_diameter_mm / 2.0) ** 2 * boss.boss_length_mm
+    boss_vol = 2.0 * math.pi * (boss.boss_diameter_mm / 2.0) ** 2 * boss.ear_thickness_mm
     ea_vol = (ea.mount_count * math.pi * (ea.boss_diameter_mm / 2.0) ** 2 * ea.boss_height_mm
               if ea.enabled else 0.0)
     boss_mass = (2.0 * n_pickups * boss_vol + ea_vol) * mm3_to_m3 * rho
@@ -331,44 +333,39 @@ def validate(p: SubframeParams) -> List[str]:
 
 
 def _pickup_leg_connectivity_issues(p: SubframeParams) -> List[str]:
-    """Each pickup boss's tie leg must overlap a cradle perimeter body at the base plane
-    so the boss is carried into the perimeter (review finding 5). The legs descend to the
-    base-plane Z band at the pickup X/Y; the inboard pickup stringer runs fore/aft at
-    |Y| = stringer_y over the pickup band. Assert every leg's footprint falls within a
-    perimeter body's XY footprint at the base plane (NX-free, analytic to the blueprint)."""
+    """Each pickup clevis must be CARRIED by the perimeter: its tie legs ROOT on the
+    inboard pickup STRINGER (a fore/aft box beam at |Y| = stringer_y running the full
+    side-rail length) and rise/reach to the hardpoint, so the load path closes pin -> ear
+    -> stringer -> crossbeam -> pad -> chassis (review finding 5). By construction the legs
+    root at the stringer, so the check confirms the geometry is sane: the stringer sits
+    INBOARD of every pickup (the ear reaches OUT to the hardpoint, not back inward through
+    the arm), each pickup is within the stringer's fore/aft span, and the ear reach is
+    bounded (no absurd mid-air stub)."""
     out: List[str] = []
-    c, boss = p.cradle, p.boss
+    c = p.cradle
     half_len = c.side_rail_length_mm / 2.0
-    sec = boss.boss_diameter_mm / 2.0
-
-    # perimeter body XY footprints at the base plane (the leg foot lands in this Z band):
-    #   inboard stringer (per side): X in [-half_len, half_len], |Y| in stringer band
-    #   front/rear crossbeams:       X in [+/-half_len -/+ embed .. ], full Y
-    #   side rails:                  X in [-half_len, half_len], |Y| in rail band
-    sy_lo = c.stringer_y_mm - c.stringer_width_mm / 2.0
-    sy_hi = c.stringer_y_mm + c.stringer_width_mm / 2.0
-    rail_lo = p.pad.pad_y_mm - c.beam_width_mm / 2.0
-    rail_hi = p.pad.pad_y_mm + c.beam_width_mm / 2.0
-
-    def _leg_supported(lx: float, ly: float) -> bool:
-        ay = abs(ly)
-        in_x = (-half_len - 1e-6) <= lx <= (half_len + 1e-6)
-        # inboard stringer band OR side-rail band, anywhere along X
-        if in_x and (sy_lo - sec <= ay <= sy_hi + sec):
-            return True
-        if in_x and (rail_lo - sec <= ay <= rail_hi + sec):
-            return True
-        return False
-
+    # the stringer's OUTBOARD edge -- the ear roots here and reaches out to the pickup
+    stringer_outer = c.stringer_y_mm + c.stringer_width_mm / 2.0
     for side in ("l", "r"):
         hp = p.hardpoints_local(side)
         for nm in _PICKUP_LEG_NAMES:
             lx, ly, _lz = hp[nm]
-            if not _leg_supported(lx, ly):
+            ay = abs(ly)
+            if ay < c.stringer_y_mm - c.stringer_width_mm / 2.0:
                 out.append(
-                    "pickup boss %s_%s leg bottoms out in empty space (no cradle perimeter "
-                    "body under |Y|=%.0f) -- the boss floats; widen/relocate the inboard "
-                    "stringer (review finding 5)" % (nm, side, abs(ly)))
+                    "pickup %s_%s |Y|=%.0f is INBOARD of the stringer band (centre %.0f): the "
+                    "ear would reach back through the centre -- move the stringer inboard"
+                    % (nm, side, ay, c.stringer_y_mm))
+            if not (-half_len - 1e-6 <= lx <= half_len + 1e-6):
+                out.append(
+                    "pickup %s_%s X=%.0f falls off the stringer fore/aft span +-%.0f -- the "
+                    "clevis floats; lengthen cradle.side_rail_length_mm" % (nm, side, lx, half_len))
+            # bounded reach: the ear leg from the stringer outer edge to the pickup
+            reach = math.hypot(ay - stringer_outer, _lz - c.base_plane_z_mm)
+            if reach > 320.0:
+                out.append(
+                    "pickup %s_%s ear reach %.0f mm from the stringer is excessive (mid-air "
+                    "stub) -- relocate the stringer closer to the pickup band" % (nm, side, reach))
     return out
 
 

@@ -132,16 +132,21 @@ class CradleParams:
     # fore/aft length of the cradle side rails (X span). Sized to bracket the fore/aft
     # spread of the pickups + pads with margin; validate() checks it actually spans them.
     side_rail_length_mm: float = 360.0
-    # the cradle base-plane height (world Z) -- the perimeter sits at this Z, just below
-    # the lower pickups so the pickup bosses rise a little and the e-axle hangs under it.
-    base_plane_z_mm: float = 250.0
-    # INBOARD PICKUP STRINGER: a fore/aft (±X) box beam per side at the pickup |Y| band,
-    # tying the front and rear crossbeams, that the suspension pickup-boss legs land on so
-    # the bosses are CARRIED by the perimeter (no mid-air boss). Without it the pickup legs
-    # bottom out in empty space inboard of the side rails (review finding 5). Its |Y| is
-    # set to the pickup band centre and its width spans the pickup Y spread.
-    stringer_y_mm: float = 384.0           # |Y| centre of the inboard pickup stringer
-    stringer_width_mm: float = 130.0       # lateral (Y) width -- spans the 344..424 pickup band
+    # the cradle base-plane height (world Z). The perimeter loop sits LOW here -- BELOW the
+    # control-arm swept envelope (the lower arm dips to z~225 mm as it crosses the rail Y
+    # band, and to z~247 mm at the inboard pickups), so the beams pass UNDER the arms and
+    # the thin pickup ears/clevises reach UP to the hardpoints. This is the fix for the
+    # subframe<->suspension overlap the NX inspection found (the old z=250 perimeter sat
+    # right in the arm path). Beam height beam_height_mm, so the perimeter top is
+    # base_plane_z + beam_height/2 -- keep that below ~215 mm to clear the arms.
+    base_plane_z_mm: float = 170.0
+    # INBOARD PICKUP STRINGER: a fore/aft (±X) box beam per side, low at the base plane,
+    # tying the front and rear crossbeams, that the suspension pickup ears rise FROM so the
+    # bosses are CARRIED by the perimeter (no mid-air boss). Its |Y| sits INBOARD of the
+    # pickup band so the stringer body stays clear of the arm legs (the ears reach OUT/UP to
+    # the pickups). Without it the pickup ears bottom out in empty space (review finding 5).
+    stringer_y_mm: float = 300.0           # |Y| centre of the inboard pickup stringer (inboard of the 344..424 pickups)
+    stringer_width_mm: float = 90.0        # lateral (Y) width of the stringer box section
 
 
 @dataclass
@@ -159,9 +164,9 @@ class PadParams:
     # subframe boss 14 mm above it; the subframe pad flange mates to that rail-top plane
     # (the ICD §7.2 "z≈400" is approximate -- 390 is what chassis_nx actually builds).
     pad_z_mm: float = 390.0
-    pad_x_local_mm: float = 150.0          # fore/aft pad offset from the axle station (±X local)
+    pad_x_local_mm: float = 175.0          # fore/aft pad offset from the axle station (±X local); set so the fore pad clears the anti-roll drop link (~local x 129)
     post_diameter_mm: float = 56.0         # riser-post OD (carries the cradle up to the pad)
-    flange_diameter_mm: float = 90.0       # pad bolt-flange OD (= chassis Subframe_Boss OD)
+    flange_diameter_mm: float = 72.0       # pad bolt-flange OD (clears the anti-roll link outboard of the rail)
     flange_thickness_mm: float = 14.0
     bolt_count: int = 4                    # bolts per pad (= chassis subframe.mount_bolt_count)
     bolt_diameter_mm: float = 14.0         # M14 (= chassis subframe.mount_bolt_diameter_mm)
@@ -169,13 +174,23 @@ class PadParams:
 
 @dataclass
 class BossParams:
-    """The suspension inboard PICKUP BOSSES: a cylindrical boss with a cross bore at
-    each suspension inboard hardpoint, so the control-arm / toe-link inboard ends bolt
-    to the subframe instead of floating (ICD §7.2 / §7.4.2). The boss axis is fore/aft
-    (±X) -- the natural pin/bolt axis for a control-arm bushing. Coordinates come from
-    the hardpoint table in this module (the single source of truth)."""
-    boss_diameter_mm: float = 36.0         # boss OD around the pickup pin
-    boss_length_mm: float = 44.0           # axial length along the pin axis (X)
+    """The suspension inboard PICKUP joints, built as a CLEVIS at each inboard hardpoint:
+    two coaxial ear plates straddling the suspension control-arm / toe-link bushing eye
+    along the pin axis (fore/aft, ±X), with the pin bore through both ears so the inboard
+    end bolts to the subframe instead of floating (ICD §7.2 / §7.4.2). The eye sits in the
+    clear GAP between the two ears -- the two solids are SEPARATED ALONG the pin axis and
+    bridged only by the bolt in the (clear) bore, exactly the suspension's own clevis/lap
+    convention, so the subframe and the arm never share volume (the fix for the
+    subframe<->suspension overlap). The pin-bore CENTRE stays on the suspension hardpoint
+    (the single source of truth), so check_corners + subframe_point_world are unaffected.
+
+    ``ear_gap_mm`` is the clear axial space between the inner faces of the two ears -- it
+    must exceed the bushing-eye axial length (~36 mm) plus a clearance so the eye + its
+    bolt head/nut fit without the ears touching the eye barrel. ``ear_thickness_mm`` is
+    each ear plate's axial thickness; ``boss_diameter_mm`` its OD (the bolt boss)."""
+    boss_diameter_mm: float = 38.0         # clevis-ear OD around the pin
+    ear_gap_mm: float = 76.0               # clear axial gap between the two ears (eye ~36 OD + tilted-eye reach + clearance)
+    ear_thickness_mm: float = 14.0         # each clevis-ear axial thickness
     bore_diameter_mm: float = 16.0         # pin / bushing-bolt clearance bore (M16 class)
 
 
@@ -185,10 +200,14 @@ class TowerParams:
     is not floating (ICD §7.2). A vertical (+Z) post rising from the cradle to the
     damper-top hardpoint, capped by a seat plate with a central damper-rod bore and a
     bolt circle. One tower per side, reaching damper_top (z≈692 local)."""
-    post_diameter_mm: float = 70.0         # tower post OD
-    seat_diameter_mm: float = 120.0        # top seat-plate OD (the upper spring seat)
+    post_diameter_mm: float = 60.0         # tower post OD
+    seat_diameter_mm: float = 160.0        # top seat-plate OD (caps the damper top mount; its rim reaches inboard of the mount so the post lands clear)
     seat_thickness_mm: float = 16.0
-    rod_bore_diameter_mm: float = 24.0     # damper-rod / top-mount clearance bore
+    # the seat lower face sits this far ABOVE the damper-top hardpoint so it clears the
+    # suspension's own damper top-mount cap (which reaches ~14 mm above the hardpoint) and
+    # the top mount bolts UP into the seat as a face touch (no buried overlap).
+    seat_standoff_mm: float = 16.0
+    rod_bore_diameter_mm: float = 60.0     # damper-rod / top-mount clearance bore (clears the Ø top mount that passes up into the seat)
     bolt_count: int = 3                    # top-mount bolts
     bolt_diameter_mm: float = 10.0         # M10 top-mount studs
 
@@ -202,10 +221,10 @@ class EAxleMountParams:
     plane at the diff carrier height."""
     enabled: bool = True
     mount_count: int = 2                   # diff/gearbox mounts (e.g. fore + aft of the diff)
-    mount_y_mm: float = 110.0              # |Y| of each mount from the centre plane
-    mount_z_mm: float = 300.0             # world Z of the diff/gearbox carrier mount face
-    boss_diameter_mm: float = 60.0
-    boss_height_mm: float = 40.0
+    mount_y_mm: float = 150.0              # |Y| of each mount from the centre plane (OUTBOARD of the diff/CV envelope at |y|~122)
+    mount_z_mm: float = 232.0              # world Z of the carrier mount-boss TOP FACE (just BELOW the gearbox housing bottom ~235 at this station so it only TOUCHES, not buries)
+    boss_diameter_mm: float = 56.0
+    boss_height_mm: float = 30.0
     bolt_diameter_mm: float = 12.0         # M12 carrier bolt
 
 
