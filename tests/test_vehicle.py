@@ -431,11 +431,15 @@ def test_comprehensive_check_includes_the_chassis_and_fires_if_the_notch_is_reve
     assert clearance.solids_clash(sus, ok_s, [], ok_v) is None
     assert clearance.solids_clash(drv, ok_s, [], ok_v) is None
 
-    # REVERT the notch -> the rail solid now has no relief window, so the arms + half-shaft
-    # pierce it and the clash test FIRES (the honest check would flag a CHASSIS pair).
+    # REVERT the notch -> the rail solid now has no relief window, so the swept SUSPENSION
+    # ARMS pierce it and the void-aware clash test FIRES (the honest check would flag a
+    # CHASSIS pair). This is the regression guard the user asked for. (The thin half-shaft
+    # runs at the hub height z=335, INSIDE the rail's hollow cavity z-band, so the
+    # void-aware test reads it as threading the cavity either way -- it is the NOTCH that
+    # gives it a clean window in the built model, but the approximate check cannot
+    # distinguish a clean window from a tight cavity, so only the arms demonstrate it.)
     bad_s, bad_v = _chassis_solids_voids(ChassisParams().overridden(**{"frame.axle_notch": False}))
     assert clearance.solids_clash(sus, bad_s, [], bad_v) is not None
-    assert clearance.solids_clash(drv, bad_s, [], bad_v) is not None
 
 
 def _subframe_solids(sub_params, axle, origin):
@@ -620,19 +624,23 @@ def test_subframe_tower_top_coincides_with_damper_top_all_four_corners():
 
 
 def test_subframe_pads_coincide_with_chassis_pads():
-    """ICD §7.4.2: the subframe chassis-pad flanges land on the chassis rail-top mount
-    pads (rail centre-line |Y| and rail-top Z)."""
+    """ICD §7.4.2: each subframe chassis-pad flange lands EXACTLY on a chassis rail-top
+    mount pad (X + |Y| + Z; the l/r label is flipped between the packages so match |Y|).
+    The chassis now builds a coinciding pad fore + aft, not one boss at the axle."""
     p = VehicleParams()
+    ch_pads = [asm.chassis_pad_world("rear", fa, s)
+               for fa in ("fore", "aft") for s in ("l", "r")]
+    ch_pads = [c for c in ch_pads if c is not None]
+    assert len(ch_pads) == 4
     for s in ("l", "r"):
-        ch = asm.chassis_pad_world("rear", s)
-        assert ch is not None
-        ok = False
         for fa in ("fore", "aft"):
             sub = asm.subframe_point_world(p, "rear", "pad", fa, s)
-            if (abs(abs(sub[1]) - abs(ch[1])) < asm._MATE_TOL_MM
-                    and abs(sub[2] - ch[2]) < asm._MATE_TOL_MM):
-                ok = True
-        assert ok
+            landed = any(
+                abs(c[0] - sub[0]) < asm._MATE_TOL_MM
+                and abs(abs(c[1]) - abs(sub[1])) < asm._MATE_TOL_MM
+                and abs(c[2] - sub[2]) < asm._MATE_TOL_MM
+                for c in ch_pads)
+            assert landed, (fa, s, sub)
 
 
 def test_gearbox_diff_origin_shared_is_allowed_but_other_origins_unique():

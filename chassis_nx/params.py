@@ -68,7 +68,20 @@ class FrameParams:
     # top so the FULL section is relieved -- the swept arms/anti-roll reach the rail top).
     axle_notch: bool = True
     axle_notch_half_width_mm: float = 165.0   # half X-extent of the relief window each side of the axle
-    axle_notch_top_mm: float = 400.0          # world Z up to which the rail (+ can end) is relieved (>= rail top)
+    axle_notch_top_mm: float = 400.0          # sanity ceiling (the band is now the rail interior, see below)
+    # The relief is a MIDDLE-BAND window: it leaves a `flange`-thick TOP and BOTTOM flange
+    # on the rail so the rail stays ONE continuous body through the axle station (a full-
+    # height cut severs it, orphaning the outboard subframe-mount pad). The half-shaft
+    # runs at the hub height (mid-rail) so the band clears it; the arms cross clear above /
+    # below the retained flanges. Keep < ~33 mm so the band still clears the half-shaft.
+    axle_notch_flange_mm: float = 25.0
+    # the retained flange is only the INBOARD-top corner of the rail width (the suspension
+    # upright/arm envelope hugs the rail's OUTBOARD edge, so the outboard-top is cut away
+    # too). `axle_notch_keep_width_mm` is how much of the rail width (from the inner face)
+    # the top flange keeps. The corridor it leaves -- inboard-top, above the half-shaft and
+    # below the upper arm, inboard of the upright -- is the clear bridge that keeps the
+    # rail one body across the axle relief.
+    axle_notch_keep_width_mm: float = 50.0
 
 
 @dataclass
@@ -112,6 +125,21 @@ class SubframeParams:
     mount_bolt_count: int = 4
     mount_bolt_diameter_mm: float = 14.0
     motor_mount_count: int = 3
+    # Each subframe bolts up to the rails through FOUR pads per axle (fore + aft x
+    # left + right), straddling the axle relief window. `pad_reach_mm` is the fore/aft
+    # offset of each pad from the axle x-station and MUST equal subframe_nx
+    # PadParams.pad_x_local_mm so the chassis bolt pattern coincides with the subframe
+    # flange (a coincidence test enforces it). The outboard pad sits past the axle, so
+    # the rails extend `mount_zone` (pad_reach + a bolt-circle margin) beyond each axle
+    # to carry it on the solid MAIN rail (not the sacrificial crush can); the crush can
+    # then butts onto the extended rail end.
+    pad_reach_mm: float = 175.0
+    mount_pad_margin_mm: float = 55.0       # solid rail kept outboard of the outboard pad bolts
+    # bolt-flange OD the subframe presents to each pad (= subframe_nx PadParams
+    # .flange_diameter_mm). The chassis drills its pad bolt circle on the SAME PCD the
+    # subframe derives from this (PCD_r = max(bolt_d, flange_d/2 - max(bolt_d, 6))), so
+    # the two bolt patterns coincide hole-for-hole.
+    mount_flange_d_mm: float = 72.0
 
 
 @dataclass

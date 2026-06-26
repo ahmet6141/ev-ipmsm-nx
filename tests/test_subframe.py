@@ -417,18 +417,27 @@ def test_tower_seat_supports_the_damper_top():
         assert seat["origin3"][2] > hp[2]      # the seat is ABOVE the damper top (caps it)
 
 
-def test_pad_flanges_land_on_chassis_pad_stations():
-    """ICD §7.4.2: the four chassis-pad flanges must sit at the chassis rail centre-line
-    y=±585 on the rail-top mating plane (the subframe's pad_z)."""
+def test_pad_flanges_seat_under_the_chassis_rail_bottom():
+    """ICD §7.4.2: the four chassis-pad flanges sit at the rail centre-line y=±585 and
+    seat UP against the rail UNDERSIDE (the subframe's pad_z = chassis rail bottom = 270),
+    a small assembly gap below it. The cradle HANGS BELOW the rails so the Ø56 riser posts
+    never pierce the rail box (bolting to the rail top would drive them straight through)."""
     p = SubframeParams()
     blue = bp.generate(p)
+    flange_t = p.pad.flange_thickness_mm
     for fa in ("fore", "aft"):
         for side in ("l", "r"):
             flange = _step(blue, "pad_flange_%s_%s" % (fa, side))
-            expect = p.pad_centre_local(fa, side)
-            assert tuple(flange["origin3"]) == pytest.approx(expect, abs=1e-6)
-            assert abs(flange["origin3"][1]) == pytest.approx(585.0)
-            assert flange["origin3"][2] == pytest.approx(390.0)
+            px, py, pz = p.pad_centre_local(fa, side)
+            ox, oy, oz = flange["origin3"]
+            assert ox == pytest.approx(px, abs=1e-6)
+            assert oy == pytest.approx(py, abs=1e-6)
+            assert abs(oy) == pytest.approx(585.0)
+            # the flange TOP (the seating face) sits just BELOW the rail-bottom mating plane
+            flange_top = oz + flange_t
+            assert flange_top < pz                       # hangs under the rail bottom
+            assert flange_top == pytest.approx(pz - 1.0, abs=1e-6)   # the 1 mm assembly gap
+            assert pz == pytest.approx(270.0)            # chassis rail bottom
 
 
 def test_cradle_perimeter_brackets_the_pad_y_via_world_bbox():
@@ -450,16 +459,21 @@ def test_cradle_perimeter_brackets_the_pad_y_via_world_bbox():
 
 
 def test_chassis_pad_alignment_against_chassis_package():
-    """Cross-check: the subframe pad Y/Z must equal what chassis_nx actually builds for
-    the subframe mount pad (rail centre-line y, rail-top z) at the same axle station."""
+    """Cross-check: the subframe's FOUR pad flanges must land EXACTLY on the chassis
+    subframe mount pads (vehicle frame), as a point set per axle -- the chassis now builds
+    a coinciding pad (fore + aft, l + r) at axle ± pad_reach, not one boss at the axle."""
     from chassis_nx.blueprint import subframe_pad_centre
     from chassis_nx.params import ChassisParams
     cp = ChassisParams()
     for axle in ("rear", "front"):
         p = SubframeParams().overridden(axle=axle)
-        veh = subframe_pad_centre(cp, axle, "l")
-        assert p.pad.pad_y_mm == pytest.approx(abs(veh[1]))
-        assert p.pad.pad_z_mm == pytest.approx(veh[2])
+        ax = cp.frame.wheelbase_mm / 2.0 if axle == "front" else -cp.frame.wheelbase_mm / 2.0
+        sub = {tuple(round(c, 3) for c in (ax + lx, ly, lz))
+               for fa in ("fore", "aft") for sd in ("l", "r")
+               for (lx, ly, lz) in [p.pad_centre_local(fa, sd)]}
+        ch = {tuple(round(c, 3) for c in subframe_pad_centre(cp, axle, fa, sd))
+              for fa in ("fore", "aft") for sd in ("l", "r")}
+        assert ch == sub, (axle, sorted(ch), sorted(sub))
 
 
 def test_pickup_bosses_match_suspension_inboard_hardpoints():

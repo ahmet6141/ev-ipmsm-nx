@@ -388,7 +388,7 @@ def _chassis_pad_alignment_issues(p: SubframeParams) -> List[str]:
         # the chassis pad is at the axle station; in the subframe LOCAL frame the axle
         # station is X=0, so compare the |Y| and Z only (the X offset pad_x_local is the
         # subframe's own fore/aft mounting spread, not a chassis coordinate).
-        veh = subframe_pad_centre(cp, p.axle, "l")            # (x, +y, rail_top)
+        veh = subframe_pad_centre(cp, p.axle, "fore", "l")   # (x, ±y, rail_top); |Y|/Z compared
         if abs(abs(veh[1]) - p.pad.pad_y_mm) > 1.0:
             out.append("pad.pad_y_mm %.0f != chassis rail centre-line |Y| %.0f (ICD §7.2)"
                        % (p.pad.pad_y_mm, abs(veh[1])))

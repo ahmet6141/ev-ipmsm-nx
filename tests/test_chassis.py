@@ -194,21 +194,23 @@ def test_validate_length_must_exceed_wheelbase():
 # geometry -- TRUE vehicle-frame world coordinates (ICD §1, §3)
 # --------------------------------------------------------------------------- #
 def test_rails_run_along_x_on_track_centrelines():
-    """Each rail is a +X prism, centred on x=0 spanning the WHEELBASE (axle-to-axle),
-    with its centre-line at y = ±(frame_inner_width/2 + rail_width/2) (ICD §3). The
-    rails end at the axles; the crush cans form the overhangs and butt onto the ends."""
+    """Each rail is a +X prism, centred on x=0 spanning the WHEELBASE PLUS a mount_zone
+    extension beyond EACH axle (so the fore/aft subframe pads land on solid rail framing
+    the axle relief), centre-line at y = ±(frame_inner_width/2 + rail_width/2) (ICD §3).
+    The crush cans form the remaining overhangs and butt onto the extended rail ends."""
     p = ChassisParams()
     blue = bp.generate(p)
     by = _steps_by_id(blue)
     f = p.frame
     rail_cl = f.frame_inner_width_mm / 2.0 + f.rail_width_mm / 2.0
+    rail_end = bp.rail_end_x(p)
+    assert rail_end > f.wheelbase_mm / 2.0            # the rail extends past the axles
     for tag, sign in (("l", -1.0), ("r", +1.0)):
         (xlo, xhi), (ylo, yhi), (zlo, zhi) = _prism_world_bbox(by["rail_%s" % tag])
-        # spans the wheelbase, centred on x = 0 (ends on the axle stations)
-        assert xlo == pytest.approx(-f.wheelbase_mm / 2.0)
-        assert xhi == pytest.approx(+f.wheelbase_mm / 2.0)
-        # the X extent is the wheelbase; the section is thin in Y and Z
-        assert (xhi - xlo) == pytest.approx(f.wheelbase_mm)
+        # spans wheelbase + 2*mount_zone, centred on x = 0
+        assert xlo == pytest.approx(-rail_end)
+        assert xhi == pytest.approx(+rail_end)
+        assert (xhi - xlo) == pytest.approx(2.0 * rail_end)
         assert (yhi - ylo) == pytest.approx(f.rail_width_mm)
         assert (zhi - zlo) == pytest.approx(f.rail_height_mm)
         # centre-line Y sits on the correct side at ±rail_cl
@@ -283,41 +285,65 @@ def test_rails_and_tray_share_a_z_datum():
     assert z["rail_bottom"] == pytest.approx(z["tray_top"])
 
 
-def test_subframe_pads_land_on_icd_axle_stations():
-    """Subframe mount pads sit at the ICD axle x-stations x = ±wheelbase/2, on the
-    rail centre-line y = ±track-bracketing rail_cl, at the rail top -- so the e-axle /
-    suspension subframe bolts where the ICD HUB_CENTRE x lands."""
+def test_subframe_pads_land_on_solid_rail_straddling_the_relief():
+    """FOUR subframe mount pads per axle (fore + aft, l + r) STRADDLE the axle relief
+    window at x = axle ± pad_reach, on the rail centre-line y = ±rail_cl, at the rail
+    top. The mount is a bolt circle drilled DOWN into the SOLID extended rail (NO boss --
+    the subframe carries its own flange to the rail top, so a chassis boss would clash
+    with it); the old design floated a boss IN the relief window where every bolt missed."""
     p = ChassisParams()
     blue = bp.generate(p)
     by = _steps_by_id(blue)
-    f = p.frame
+    f, s = p.frame, p.subframe
     rail_cl = f.frame_inner_width_mm / 2.0 + f.rail_width_mm / 2.0
     z = bp._z_layout(p)
-    cases = {
-        "subframe_boss_front_l": (+f.wheelbase_mm / 2.0, -rail_cl),
-        "subframe_boss_front_r": (+f.wheelbase_mm / 2.0, +rail_cl),
-        "subframe_boss_rear_l": (-f.wheelbase_mm / 2.0, -rail_cl),
-        "subframe_boss_rear_r": (-f.wheelbase_mm / 2.0, +rail_cl),
-    }
-    for bid, (ex, ey) in cases.items():
-        s = by[bid]
-        assert s["kind"] == "cylinder" and s["boolean"] == "unite"
-        ox, oy, oz = s["origin3"]
-        assert ox == pytest.approx(ex)
-        assert oy == pytest.approx(ey)
-        assert oz == pytest.approx(z["rail_top"])        # boss base on the rail top
-    # and the public mating-point helper agrees
-    assert bp.subframe_pad_centre(p, "front", "r") == pytest.approx((f.wheelbase_mm / 2.0, rail_cl, z["rail_top"]))
+    for axle, ax in (("front", +f.wheelbase_mm / 2.0), ("rear", -f.wheelbase_mm / 2.0)):
+        x_sign = -1.0 if axle == "front" else 1.0
+        for fore_aft in ("fore", "aft"):
+            fa_sign = 1.0 if fore_aft == "fore" else -1.0
+            ex = ax + x_sign * fa_sign * s.pad_reach_mm
+            for side, ey in (("l", -rail_cl), ("r", +rail_cl)):
+                px, py, pz = bp.subframe_pad_centre(p, axle, fore_aft, side)
+                assert px == pytest.approx(ex)
+                assert py == pytest.approx(ey)
+                assert pz == pytest.approx(z["rail_bottom"])    # mate the rail UNDERSIDE
+                # the pad's bolt circle exists and drills the solid rail of that side
+                bid = "subframe_bolt_%s_%s_%s_0" % (axle, fore_aft, side)
+                assert bid in by, bid
+                assert by[bid]["boolean"] == "subtract" and by[bid]["target"] == "rail_%s" % side
+    # no floating boss bodies any more
+    assert not any(sid.startswith("subframe_boss") for sid in by)
 
 
-def test_subframe_pads_align_with_icd_hub_x():
-    """ICD §1: the front/rear axle x-stations are ±wheelbase/2. The subframe pads must
-    land there so the suspension/e-axle hub (HUB_CENTRE x) is picked up."""
+def test_subframe_pads_straddle_the_axle_stations():
+    """The fore/aft pads bracket the axle x-station (one inboard, one outboard) so the
+    cradle bolts down both sides of the half-shaft / control-arm relief window."""
     p = ChassisParams()
-    front = bp.subframe_pad_centre(p, "front", "r")
-    rear = bp.subframe_pad_centre(p, "rear", "r")
-    assert front[0] == pytest.approx(+p.frame.wheelbase_mm / 2.0)
-    assert rear[0] == pytest.approx(-p.frame.wheelbase_mm / 2.0)
+    for axle, ax in (("front", +p.frame.wheelbase_mm / 2.0),
+                     ("rear", -p.frame.wheelbase_mm / 2.0)):
+        xs = sorted(bp.subframe_pad_centre(p, axle, fa, "r")[0] for fa in ("fore", "aft"))
+        assert xs[0] < ax < xs[1]                                   # straddle the axle
+        for x in xs:
+            assert abs(abs(x - ax) - p.subframe.pad_reach_mm) < 1e-6
+
+
+def test_chassis_pads_coincide_with_subframe_flanges():
+    """THE MATING CONTRACT: the chassis bolt-pad centres (vehicle frame) must equal the
+    subframe pad-flange centres as a POINT SET per axle, so the two bolt patterns line up
+    hole-for-hole. The subframe is placed at (axle_x, 0, 0) identity, so its local pad +
+    axle_x is the vehicle pad. (l/r labels differ between the packages -- the chassis rail
+    'l' is -Y, the subframe 'l' is +Y -- but the geometry must coincide.)"""
+    sub_params = pytest.importorskip("subframe_nx.params")
+    p = ChassisParams()
+    for axle, ax in (("front", +p.frame.wheelbase_mm / 2.0),
+                     ("rear", -p.frame.wheelbase_mm / 2.0)):
+        sp = sub_params.SubframeParams(axle=axle)
+        sub_pads = {tuple(round(c, 3) for c in (ax + lx, ly, lz))
+                    for fa in ("fore", "aft") for sd in ("l", "r")
+                    for (lx, ly, lz) in [sp.pad_centre_local(fa, sd)]}
+        chassis_pads = {tuple(round(c, 3) for c in bp.subframe_pad_centre(p, axle, fa, sd))
+                        for fa in ("fore", "aft") for sd in ("l", "r")}
+        assert chassis_pads == sub_pads, (axle, sorted(chassis_pads), sorted(sub_pads))
 
 
 def test_crush_cans_extend_beyond_the_wheelbase_along_x():
@@ -325,18 +351,18 @@ def test_crush_cans_extend_beyond_the_wheelbase_along_x():
     blue = bp.generate(p)
     by = _steps_by_id(blue)
     f = p.frame
-    half_wb = f.wheelbase_mm / 2.0
+    rail_end = bp.rail_end_x(p)
     half_len = f.overall_length_mm / 2.0
-    # front can: forward of the front axle, reaching the front end of the platform
+    # front can: butts onto the EXTENDED rail end, reaching the front end of the platform
     (fxlo, fxhi), _, _ = _prism_world_bbox(by["crush_front_l"])
-    assert fxlo == pytest.approx(half_wb)            # starts at the front axle
+    assert fxlo == pytest.approx(rail_end)           # starts at the extended rail end
     assert fxhi == pytest.approx(half_len)           # reaches the nose
-    assert fxhi > half_wb
-    # rear can: behind the rear axle, reaching the rear end
+    assert fxhi > rail_end
+    # rear can: butts onto the extended rear rail end, reaching the rear end
     (rxlo, rxhi), _, _ = _prism_world_bbox(by["crush_rear_l"])
-    assert rxhi == pytest.approx(-half_wb)           # ends at the rear axle
+    assert rxhi == pytest.approx(-rail_end)          # ends at the extended rail end
     assert rxlo == pytest.approx(-half_len)          # reaches the tail
-    assert rxlo < -half_wb
+    assert rxlo < -rail_end
 
 
 def test_crush_cans_are_coaxial_with_the_rails():

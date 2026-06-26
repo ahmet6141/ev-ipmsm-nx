@@ -14,30 +14,39 @@ Coordinate convention -- THE TRUE VEHICLE FRAME (ISO 8855, ICD §1)
 
 The skateboard platform, built DIRECTLY in vehicle coordinates
     * Two longitudinal RAILS are hollow box beams running along +X (kind="prism",
-      axis=+X). Their centre-lines sit at y = ±(frame_inner_width/2 + rail_width/2)
-      and they span the WHEELBASE centred on x = 0
-      (x = -wheelbase/2 .. +wheelbase/2). The front/rear crush cans form the overhangs
-      and butt onto the rail ends (so the cans are NOT buried inside the rails).
+      axis=+X). Their centre-lines sit at y = ±(frame_inner_width/2 + rail_width/2) and
+      they span the WHEELBASE PLUS a mount_zone extension beyond EACH axle, so the
+      fore + aft subframe mount pads (at axle ± pad_reach) both land on the SOLID main
+      rail, framing the axle relief between them. The front/rear crush cans butt onto
+      the extended rail ends (NOT buried inside the rails).
+    * The AXLE RELIEF is a STEPPED window at each axle that leaves only the INBOARD-TOP
+      corner of the rail as a continuous bridge -- the one corridor clear of the
+      suspension (above the half-shaft, below the upper arm, inboard of the upright) --
+      so the rail stays ONE body across the axle while every suspension member + the
+      half-shaft pass through the open relief.
     * Lateral CROSSMEMBERS are hollow box beams running along +Y (axis=+Y) that
       PHYSICALLY BRIDGE the two rails: each spans the full inner width and embeds a
       little into both rails, distributed along the wheelbase in X.
     * The sealed structural BATTERY TRAY is a hollow box BETWEEN the rails, low in Z
       (the floor), centred on x = 0, with internal lateral crossbraces.
-    * Front & rear SUBFRAME MOUNT PADS sit at the axle x-stations (x = ±wheelbase/2)
-      on each rail -- a boss united to the rail plus a bolt-hole circle -- so the
-      e-axle / suspension subframes bolt where the ICD HUB_CENTRE x lands.
+    * Front & rear SUBFRAME MOUNTS: FOUR pad bolt-circles per axle (fore + aft, l + r)
+      drilled into the rail at axle ± pad_reach, coinciding with the subframe's four pad
+      flanges. The subframe bolts UP to the rail UNDERSIDE (it hangs below the rails), so
+      the chassis side is just the solid rail + a bolt circle -- no boss (a boss would
+      clash the subframe flange, and a vertical post to the rail top pierces the rail).
     * BODY-MOUNT holes run along the rail tops; front/rear CRUSH CANS extend along
-      +X beyond the wheelbase (coaxial with the rails).
+      +X beyond the extended rail ends (coaxial with the rails).
 
 Vertical (Z) datum -- a derived skateboard floor stack (no new params needed)
     GROUND_CLEARANCE  = floor (battery tray bottom) above the road.
     The battery tray occupies z = GROUND_CLEARANCE .. GROUND_CLEARANCE + tray_height.
     The rails sit ON TOP of the tray height band: rail bottom = tray top, so the rail
     centre-line is rail_cz = GROUND_CLEARANCE + tray_height + rail_height/2. With the
-    default dimensions (clearance 140 + tray 110 + rail 120) the rail mid-height is
-    rail_cz = 310 mm and the rail top is 370 mm; the subframe mount pads sit ON the
-    rail top (370 mm), ~35 mm above the ICD hub-centre line (r = 335) -- the e-axle /
-    suspension subframes bolt to the pad on the rail top at the axle x-stations.
+    default dimensions (clearance 140 + tray 130 + rail 120) the rail mid-height is
+    rail_cz = 330 mm, the rail top is 390 mm and the rail BOTTOM is 270 mm; the e-axle /
+    suspension subframes bolt UP to the rail UNDERSIDE (z = 270, the rail bottom) at the
+    axle x-stations -- the cradle hangs below the rails, so its riser posts never pierce
+    the rail box (a post to the rail top would drive straight through it).
 
 Hollow sections
     Every box beam = an OUTER prism (create) plus a slightly smaller CONCENTRIC inner
@@ -103,19 +112,32 @@ def _z_layout(p: ChassisParams) -> Dict[str, float]:
 
 
 def _axle_notch_band(p: ChassisParams) -> Dict[str, float]:
-    """The axle-notch relief window geometry (Z band + X half-width), shared by the rail
-    notch (frame_steps) and the crush-can notch (mount_steps) so the two halves of the
-    window line up. The relief reaches the FULL rail height (notch_top >= rail top) over
-    X = axle +- half_width."""
+    """The axle-notch relief window geometry (Z band + X half-width). It is a MIDDLE-BAND
+    window: it relieves the rail over X = axle +- half_width but leaves a `flange`-thick
+    TOP and BOTTOM flange so the rail stays ONE CONTINUOUS body through the axle station
+    (a full-height cut would SEVER the rail into disconnected pieces, orphaning the
+    outboard subframe-mount pad). The half-shaft runs at the hub height (mid-rail) so the
+    middle band clears it; the control arms pass clear above the top flange / below the
+    bottom flange where they cross the rail.
+
+    `axle_notch_top_mm` is read only as a sanity ceiling; the actual band is the rail
+    interior between the two retained flanges."""
     f = p.frame
     z = _z_layout(p)
-    notch_top = max(f.axle_notch_top_mm, z["rail_top"] + 1.0)   # relieve the FULL rail height
-    notch_bottom = z["rail_bottom"] - 1.0                       # over-run below for a clean cut
+    flange = max(f.axle_notch_flange_mm, f.rail_wall_mm + 1.0)   # retained TOP flange
+    # Relieve from BELOW the rail bottom up to a retained TOP flange. The lower control
+    # arm crosses the rail right at the rail-bottom plane, so the bottom is opened fully
+    # (no bottom flange); the half-shaft (mid-rail) is cleared; the upper arm passes ABOVE
+    # the rail top, clear of the retained top flange. The top flange stays CONTINUOUS over
+    # the window so the rail (incl. the outboard mount extension) remains ONE body.
+    notch_bottom = z["rail_bottom"] - 1.0
+    notch_top = z["rail_top"] - flange
     return {
         "half_width": f.axle_notch_half_width_mm,
+        "flange": flange,
         "top": notch_top,
         "bottom": notch_bottom,
-        "h": max(0.0, notch_top - notch_bottom),
+        "h": max(1.0, notch_top - notch_bottom),
         "cz": 0.5 * (notch_bottom + notch_top),
     }
 
@@ -128,15 +150,57 @@ def rail_centreline_y(p: ChassisParams) -> float:
     return f.frame_inner_width_mm / 2.0 + f.rail_width_mm / 2.0
 
 
-def subframe_pad_centre(p: ChassisParams, axle: str, side: str) -> Vec3:
-    """World (vehicle-frame) centre of a front/rear subframe mount pad face on the
-    rail top. `axle` in {"front","rear"} -> x = ±wheelbase/2 (the ICD axle station);
-    `side` in {"l","r"} -> y = ∓/± rail centre-line. z = rail top (boss face)."""
+def mount_zone_mm(p: ChassisParams) -> float:
+    """How far each rail extends OUTBOARD past its axle x-station so the OUTBOARD
+    subframe mount pad (at axle ± pad_reach) lands on solid MAIN rail with margin for
+    its bolt circle. The crush can butts onto this extended rail end."""
+    s = p.subframe
+    return s.pad_reach_mm + s.mount_pad_margin_mm
+
+
+def rail_x_span(p: ChassisParams) -> Tuple[float, float]:
+    """(x_start, length) of each longitudinal rail. The rail spans the WHEELBASE PLUS a
+    `mount_zone` extension beyond EACH axle (so both fore + aft subframe pads sit on the
+    solid main rail, framing the axle relief window). The crush cans form the remaining
+    overhang and butt onto these extended rail ends."""
     f = p.frame
+    mz = mount_zone_mm(p)
+    x_start = -(f.wheelbase_mm / 2.0 + mz)
+    length = f.wheelbase_mm + 2.0 * mz
+    return x_start, length
+
+
+def rail_end_x(p: ChassisParams) -> float:
+    """+X end of each rail (the rail spans ±rail_end_x). The front/rear crush cans start
+    here (butt onto the extended rail end)."""
+    f = p.frame
+    return f.wheelbase_mm / 2.0 + mount_zone_mm(p)
+
+
+def subframe_pad_centre(p: ChassisParams, axle: str, fore_aft: str, side: str) -> Vec3:
+    """World (vehicle-frame) centre of ONE subframe mount pad on the rail UNDERSIDE.
+    There are FOUR pads per axle (fore + aft, left + right) straddling the axle relief
+    window, so the chassis bolt pattern coincides with the subframe's four pad flanges.
+
+    `axle` in {"front","rear"}  -> axle station x = ±wheelbase/2
+    `fore_aft` in {"fore","aft"} -> ±pad_reach from the axle station along X
+    `side` in {"l","r"}          -> ∓/± rail centre-line in Y
+    z = rail BOTTOM (the underside mating face the subframe flange seats UP against; the
+        subframe cradle hangs below the rails and bolts up, so its riser posts never
+        pierce the rail box).
+
+    The fore/aft -> ±X mapping matches subframe_nx.params.pad_centre_local (which mirrors
+    X on the FRONT axle), so chassis pad == subframe pad for all four, both axles."""
+    f, s = p.frame, p.subframe
     z = _z_layout(p)
-    x = +f.wheelbase_mm / 2.0 if axle == "front" else -f.wheelbase_mm / 2.0
+    axle_x = +f.wheelbase_mm / 2.0 if axle == "front" else -f.wheelbase_mm / 2.0
+    # subframe_nx mirrors fore/aft X on the FRONT axle (x_sign = -1 front / +1 rear);
+    # mirror identically here so the pads coincide.
+    x_sign = -1.0 if axle == "front" else 1.0
+    fa_sign = 1.0 if fore_aft == "fore" else -1.0
+    x = axle_x + x_sign * fa_sign * s.pad_reach_mm
     y = rail_centreline_y(p) * (-1.0 if side == "l" else +1.0)
-    return (x, y, z["rail_top"])
+    return (x, y, z["rail_bottom"])
 
 
 # --------------------------------------------------------------------------- #
@@ -193,13 +257,14 @@ def frame_steps(p: ChassisParams) -> List[BuildStep]:
     steps: List[BuildStep] = []
 
     rail_cy = rail_centreline_y(p)
-    # The rails span the WHEELBASE (axle-to-axle), centred on x = 0; the front/rear
-    # CRUSH CANS form the overhangs and BUTT onto the rail ends (ICD §3 docstring:
-    # "crush cans extend BEYOND the wheelbase ... butt onto the rail ends"). Ending the
-    # rails at the wheelbase -- instead of running them the full overall_length -- is
-    # what stops the crush cans being fully buried inside the rails (the adversarial-
-    # review HIGH finding: two coincident solids in each overhang).
-    x_start = -f.wheelbase_mm / 2.0
+    # The rails span the WHEELBASE PLUS a `mount_zone` extension beyond EACH axle, so the
+    # fore AND aft subframe mount pads (at axle ± pad_reach) both land on the solid MAIN
+    # rail and FRAME the axle relief window between them. The front/rear CRUSH CANS form
+    # the remaining overhang and BUTT onto the extended rail ends (ICD §3: cans extend
+    # BEYOND the rail ends, no buried-coincident-solid). Running the rails to the
+    # wheelbase only -- the old design -- put the axle relief at the rail END and left the
+    # subframe pads floating in the window with no rail to bolt to.
+    x_start, rail_len = rail_x_span(p)
 
     # two longitudinal rails -- hollow box beams running along +X. The (u, v) section
     # lays out in (Y, Z): u = +Y spans rail_width, v = +Z spans rail_height.
@@ -208,7 +273,7 @@ def frame_steps(p: ChassisParams) -> List[BuildStep]:
             steps, "rail_%s" % tag, "frame_rail", "Frame_Rail_%s" % tag.upper(),
             origin3=(x_start, sign * rail_cy, z["rail_cz"]),
             axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0),
-            length=f.wheelbase_mm,
+            length=rail_len,
             sec_u=f.rail_width_mm, sec_v=f.rail_height_mm, wall=f.rail_wall_mm,
             color=COL_RAIL)
 
@@ -226,24 +291,50 @@ def frame_steps(p: ChassisParams) -> List[BuildStep]:
     # clean body).
     if f.axle_notch and f.axle_notch_half_width_mm > 0:
         nb = _axle_notch_band(p)
+        hw = nb["half_width"]
+        flange_bottom = nb["top"]                       # rail_top - flange (e.g. 365)
+        rail_top = z["rail_top"]
+        rail_bot = z["rail_bottom"]
+        inner_y = rail_cy - f.rail_width_mm / 2.0        # |Y| of the rail inner face
+        keep = f.axle_notch_keep_width_mm
+        # the relief is a STEPPED window that leaves ONLY the INBOARD-TOP corner of the
+        # rail as a continuous bridge across the axle (so the rail -- incl. the outboard
+        # mount extension -- stays ONE body). Two subtract cuts:
+        #   (A) the whole BOTTOM + MIDDLE (full width, rail_bottom -> flange_bottom): opens
+        #       the lower-arm band + the half-shaft mid-rail corridor.
+        #   (B) the OUTBOARD-TOP corner (|Y| inner+keep -> rail outer, flange_bottom ->
+        #       rail_top): clears the upright/arm envelope that hugs the rail's outboard
+        #       edge. What remains is the inboard-top flange |Y| in [inner, inner+keep],
+        #       z in [flange_bottom, rail_top] -- a clear corridor (above the half-shaft,
+        #       below the upper arm, inboard of the upright).
         for axle, axle_x in (("front", +f.wheelbase_mm / 2.0),
                              ("rear", -f.wheelbase_mm / 2.0)):
             for tag, sign in (("l", -1.0), ("r", +1.0)):
-                cy = sign * rail_cy
-                # INBOARD half -> relieve the RAIL (from the axle station toward x=0).
-                # The rail spans [-wb/2, +wb/2]; the front axle is its +X end and the rear
-                # axle its -X end, so the inboard direction is -X (front) / +X (rear).
-                rail_inboard = -1.0 if axle == "front" else +1.0
-                rail_x0 = min(axle_x, axle_x + rail_inboard * nb["half_width"])
+                x0 = axle_x - hw
+                # (A) bottom + middle, full width
+                cz_a = 0.5 * ((rail_bot - 1.0) + flange_bottom)
+                hv_a = 0.5 * (flange_bottom - (rail_bot - 1.0))
                 steps.append(BuildStep(
                     id="axle_notch_%s_%s" % (axle, tag), role="axle_notch_cut",
                     kind="prism", boolean="subtract", target="rail_%s" % tag,
                     body_name="Axle_Notch_%s_%s" % (axle.upper(), tag.upper()),
                     material="air", color=COL_AIR,
-                    profile=_rect_uv(f.rail_width_mm / 2.0 + 1.0, nb["h"] / 2.0),
-                    origin3=(rail_x0, cy, nb["cz"]),
-                    axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0),
-                    length=nb["half_width"]))
+                    profile=_rect_uv(f.rail_width_mm / 2.0 + 1.0, hv_a),
+                    origin3=(x0, sign * rail_cy, cz_a),
+                    axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0), length=2.0 * hw))
+                # (B) outboard-top corner (removes the rail top from |Y| inner+keep outward)
+                out_lo = inner_y + keep
+                out_hi = rail_cy + f.rail_width_mm / 2.0 + 1.0
+                cz_b = 0.5 * (flange_bottom + (rail_top + 1.0))
+                hv_b = 0.5 * ((rail_top + 1.0) - flange_bottom)
+                steps.append(BuildStep(
+                    id="axle_notch_top_%s_%s" % (axle, tag), role="axle_notch_cut",
+                    kind="prism", boolean="subtract", target="rail_%s" % tag,
+                    body_name="Axle_Notch_Top_%s_%s" % (axle.upper(), tag.upper()),
+                    material="air", color=COL_AIR,
+                    profile=_rect_uv(0.5 * (out_hi - out_lo), hv_b),
+                    origin3=(x0, sign * 0.5 * (out_lo + out_hi), cz_b),
+                    axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0), length=2.0 * hw))
 
     # lateral crossmembers -- hollow box beams running along +Y that BRIDGE the rails.
     # Each spans the inner channel plus a small embed into both rails, so the ends land
@@ -326,46 +417,45 @@ def mount_steps(p: ChassisParams) -> List[BuildStep]:
     z = _z_layout(p)
     steps: List[BuildStep] = []
     rail_cy = rail_centreline_y(p)
-    boss_d = max(2.0 * s.mount_bolt_diameter_mm, 30.0)
-    boss_h = 14.0                                   # pad height above the rail top
 
-    # subframe mount pads: a vertical (+Z) cylindrical boss UNITED to the rail top at
-    # the axle x-station, with a bolt-hole circle drilled down through it. Placed at
-    # x = ±wheelbase/2 so the e-axle / suspension subframe bolts to the ICD axle line.
-    def subframe_set(axle: str, x_station: float):
-        for side, sign in (("l", -1.0), ("r", +1.0)):
-            rid = "rail_%s" % side
-            cy = sign * rail_cy
-            bid = "subframe_boss_%s_%s" % (axle, side)
-            # boss: a short cylinder on a +Z axis, base on the rail top, united to rail
-            steps.append(BuildStep(
-                id=bid, role="subframe_boss", kind="cylinder", boolean="unite",
-                target=rid, body_name="Subframe_Boss_%s_%s" % (axle.upper(), side.upper()),
-                material="aluminium", color=COL_BOSS,
-                outer_radius=boss_d / 2.0, length=boss_h,
-                origin3=(x_station, cy, z["rail_top"]), axis=(0.0, 0.0, 1.0)))
-            # bolt-hole circle: drilled straight DOWN (-Z) through the boss + rail top
-            if s.mount_bolt_count > 0 and s.mount_bolt_diameter_mm > 0:
-                pcd_r = boss_d / 2.0 - max(s.mount_bolt_diameter_mm, 6.0)
-                pcd_r = max(pcd_r, s.mount_bolt_diameter_mm)
+    # SUBFRAME MOUNTS: each subframe bolts UP to the rail top through FOUR pads per axle
+    # (fore + aft, left + right) that STRADDLE the axle relief window. The mating face is
+    # the solid rail TOP at each pad centre -- the subframe carries its OWN bolt-flange up
+    # to that face, so the chassis must NOT raise a boss here (a boss would interpenetrate
+    # the subframe flange, the bug behind the old floating "Subframe_Boss" bodies). The
+    # chassis side is therefore the solid extended rail + a bolt circle drilled DOWN
+    # through it at each pad. Pads sit at axle ± pad_reach -- just OUTBOARD of the relief
+    # window, on the extended solid rail -- so every bolt lands in real rail material (the
+    # old pads sat IN the window at the axle station and every bolt missed: "tool outside
+    # target"). PCD matches the subframe flange (same formula) so the holes coincide.
+    def subframe_bolts(axle: str):
+        if s.mount_bolt_count <= 0 or s.mount_bolt_diameter_mm <= 0:
+            return
+        bd = s.mount_bolt_diameter_mm
+        pcd_r = max(bd, s.mount_flange_d_mm / 2.0 - max(bd, 6.0))
+        for fore_aft in ("fore", "aft"):
+            for side in ("l", "r"):
+                px, py, _pz = subframe_pad_centre(p, axle, fore_aft, side)
+                rid = "rail_%s" % side
                 for k in range(s.mount_bolt_count):
                     ang = 2.0 * math.pi * k / s.mount_bolt_count
-                    hx = x_station + pcd_r * math.cos(ang)
-                    hy = cy + pcd_r * math.sin(ang)
+                    hx = px + pcd_r * math.cos(ang)
+                    hy = py + pcd_r * math.sin(ang)
                     steps.append(BuildStep(
-                        id="subframe_bolt_%s_%s_%d" % (axle, side, k),
+                        id="subframe_bolt_%s_%s_%s_%d" % (axle, fore_aft, side, k),
                         role="subframe_bolt_cut", kind="hole", boolean="subtract",
                         target=rid,
-                        body_name="Subframe_Bolt_%s_%s_%d" % (axle.upper(), side.upper(), k),
+                        body_name="Subframe_Bolt_%s_%s_%s_%d" % (
+                            axle.upper(), fore_aft.upper(), side.upper(), k),
                         material="air", color=COL_AIR,
-                        outer_radius=s.mount_bolt_diameter_mm / 2.0,
-                        cx=hx, cy=hy, z0=z["rail_top"] + boss_h + 0.5,
-                        axis=(0.0, 0.0, -1.0), length=boss_h + f.rail_height_mm + 1.0))
+                        outer_radius=bd / 2.0,
+                        cx=hx, cy=hy, z0=z["rail_top"] + 0.5,
+                        axis=(0.0, 0.0, -1.0), length=f.rail_height_mm + 1.0))
 
     if s.front_subframe:
-        subframe_set("front", +f.wheelbase_mm / 2.0)
+        subframe_bolts("front")
     if s.rear_subframe:
-        subframe_set("rear", -f.wheelbase_mm / 2.0)
+        subframe_bolts("rear")
 
     # body-mount holes along each rail TOP, drilled DOWN (-Z) into the rail, spread
     # over the rail span (the WHEELBASE -- the rails now end at the axles; the overhangs
@@ -387,20 +477,23 @@ def mount_steps(p: ChassisParams) -> List[BuildStep]:
                     cx=x, cy=cy, z0=z["rail_top"] + 0.5,
                     axis=(0.0, 0.0, -1.0), length=f.rail_wall_mm + 1.0))
 
-    # crush cans: short hollow box beams extending along +X BEYOND the wheelbase,
-    # coaxial with each rail (front ahead of +X, rear behind -X). The rails END at the
-    # axles (x = +-wheelbase/2), so each can starts exactly on the rail end face and
-    # grows outward into the overhang -- they BUTT onto the rail ends (no overlap) and
-    # form the front/rear crash structure (ICD §3). The can length is the overhang.
-    overhang = (f.overall_length_mm - f.wheelbase_mm) / 2.0
-    can_len = overhang
+    # crush cans: short hollow box beams extending along +X BEYOND each EXTENDED rail end,
+    # coaxial with each rail (front ahead of +X, rear behind -X). The rails now run a
+    # mount_zone past each axle, so each can starts on that extended rail end face and
+    # grows outward into the remaining overhang -- they BUTT onto the rail ends (no
+    # overlap) and form the front/rear crash structure (ICD §3). Because the rail
+    # extension carries the can clear OUTBOARD of the corner + half-shaft sweep, the can
+    # is now a FULL solid crash box -- it no longer needs an axle relief (the old
+    # crush-can notch is gone).
+    rail_end = rail_end_x(p)
+    can_len = f.overall_length_mm / 2.0 - rail_end
     if can_len > 0:
         if bm.crush_can_front:
             for side, sign in (("l", -1.0), ("r", +1.0)):
                 _box_beam(
                     steps, "crush_front_%s" % side, "crush_can",
                     "Crush_Can_Front_%s" % side.upper(),
-                    origin3=(f.wheelbase_mm / 2.0, sign * rail_cy, z["rail_cz"]),
+                    origin3=(rail_end, sign * rail_cy, z["rail_cz"]),
                     axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0), length=can_len,
                     sec_u=f.rail_width_mm, sec_v=f.rail_height_mm,
                     wall=f.rail_wall_mm, color=COL_CRUSH)
@@ -409,35 +502,10 @@ def mount_steps(p: ChassisParams) -> List[BuildStep]:
                 _box_beam(
                     steps, "crush_rear_%s" % side, "crush_can",
                     "Crush_Can_Rear_%s" % side.upper(),
-                    origin3=(-f.wheelbase_mm / 2.0 - can_len, sign * rail_cy, z["rail_cz"]),
+                    origin3=(-rail_end - can_len, sign * rail_cy, z["rail_cz"]),
                     axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0), length=can_len,
                     sec_u=f.rail_width_mm, sec_v=f.rail_height_mm,
                     wall=f.rail_wall_mm, color=COL_CRUSH)
-
-    # AXLE NOTCH (crush-can half): relieve the OUTBOARD half of the axle window from the
-    # crush-can END (now that the cans exist), so the corner + half-shaft envelope that
-    # spills past the axle into the overhang clears the can too. Each cut overlaps the can
-    # solid at its inboard end -> NX leaves one clean can body. The rail half is cut in
-    # frame_steps; the two halves share _axle_notch_band so they line up.
-    if f.axle_notch and f.axle_notch_half_width_mm > 0 and can_len > 0:
-        nb = _axle_notch_band(p)
-        for axle, axle_x, fitted in (("front", +f.wheelbase_mm / 2.0, bm.crush_can_front),
-                                     ("rear", -f.wheelbase_mm / 2.0, bm.crush_can_rear)):
-            if not fitted:
-                continue
-            can_outboard = +1.0 if axle == "front" else -1.0
-            cut_len = min(nb["half_width"], can_len)
-            can_x0 = min(axle_x, axle_x + can_outboard * cut_len)
-            for side, sign in (("l", -1.0), ("r", +1.0)):
-                steps.append(BuildStep(
-                    id="axle_notch_can_%s_%s" % (axle, side), role="axle_notch_cut",
-                    kind="prism", boolean="subtract", target="crush_%s_%s" % (axle, side),
-                    body_name="Axle_Notch_Can_%s_%s" % (axle.upper(), side.upper()),
-                    material="air", color=COL_AIR,
-                    profile=_rect_uv(f.rail_width_mm / 2.0 + 1.0, nb["h"] / 2.0),
-                    origin3=(can_x0, sign * rail_cy, nb["cz"]),
-                    axis=(1.0, 0.0, 0.0), u_dir=(0.0, 1.0, 0.0),
-                    length=cut_len))
     return steps
 
 

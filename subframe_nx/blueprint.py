@@ -328,27 +328,38 @@ def pad_steps(p: SubframeParams) -> List[BuildStep]:
     steps: List[BuildStep] = []
     base_z = c.base_plane_z_mm
 
+    # a small assembly clearance between the flange top and the rail underside: the
+    # bolted joint pulls it closed on torque, but in the as-modelled (un-torqued) state a
+    # face-on-face contact samples as a 0 mm "touch" that the whole-vehicle clash check
+    # still reports. Seating the flange this far BELOW the rail bottom keeps the cradle a
+    # clean, unambiguous clear of the rail (the bolts span the gap).
+    seat_gap = 1.0
     for fore_aft in ("fore", "aft"):
         for side in ("l", "r"):
             px, py, pz = p.pad_centre_local(fore_aft, side)
+            flange_top = pz - seat_gap                       # 1 mm below the rail underside
             pid = "pad_post_%s_%s" % (fore_aft, side)
-            # riser post: a +Z cylinder from the side-rail top up THROUGH the pad face. It
-            # starts a little BELOW the base plane (overlaps the side-rail box -> united
-            # cleanly) and runs a touch ABOVE the pad face so it overlaps the bolt-flange
-            # disc that caps it (a solid overlap, not a fragile coincident-face unite).
+            # riser post: a +Z cylinder from the cradle perimeter UP to the bolt-flange
+            # that hangs just BELOW the rail UNDERSIDE. The cradle hangs below the rails,
+            # so the post tops out below the pad-centre mating plane (z = pz = rail bottom)
+            # and NEVER enters the rail box -- bolting to the rail TOP instead would drive
+            # this Ø56 post straight through the rail (a 16 mm interpenetration). It starts
+            # below the base plane (overlaps the side-rail box -> clean unite) and runs a
+            # touch INTO the flange below the rail so the two weld solidly.
             _united_cyl(steps, pid, "pad_post", "Pad_Post_%s_%s" % (fore_aft.upper(), side.upper()),
                         (px, py, base_z - c.beam_height_mm / 2.0),
-                        (px, py, pz + pad.flange_thickness_mm * 0.5),
+                        (px, py, flange_top - pad.flange_thickness_mm * 0.5),
                         pad.post_diameter_mm, COL_POST, CRADLE)
-            # bolt-flange disc on the pad face (the bolted interface to the chassis boss). Its
-            # origin3 sits EXACTLY at the pad-centre (the chassis-mate contract the tests +
-            # subframe_point_world read); the post above already overlaps it, so the unite
-            # merges into the weldment.
+            # bolt-flange disc seating UP against the rail underside (a seat_gap below it):
+            # it hangs from flange_top - flange_thickness to flange_top. The pad-centre
+            # mating plane stays at z = pz = rail bottom (the chassis-mate contract the
+            # tests + subframe_point_world read); the flange is the seat_gap below it.
             fid = "pad_flange_%s_%s" % (fore_aft, side)
             _united_cyl(steps, fid, "pad_flange", "Pad_Flange_%s_%s" % (fore_aft.upper(), side.upper()),
-                        (px, py, pz), (px, py, pz + pad.flange_thickness_mm),
+                        (px, py, flange_top - pad.flange_thickness_mm), (px, py, flange_top),
                         pad.flange_diameter_mm, COL_POST, CRADLE)
-            # bolt circle drilled UP (+Z) through the flange (clearance for the chassis bolts)
+            # bolt circle drilled UP (+Z) through the flange (clearance for the bolts that
+            # pass up into the rail underside; the chassis drills the matching rail holes)
             if pad.bolt_count > 0 and pad.bolt_diameter_mm > 0:
                 pcd_r = max(pad.bolt_diameter_mm,
                             pad.flange_diameter_mm / 2.0 - max(pad.bolt_diameter_mm, 6.0))
@@ -362,7 +373,7 @@ def pad_steps(p: SubframeParams) -> List[BuildStep]:
                         body_name="Pad_Bolt_%s_%s_%d" % (fore_aft.upper(), side.upper(), k),
                         material="air", color=COL_AIR,
                         outer_radius=pad.bolt_diameter_mm / 2.0,
-                        cx=hx, cy=hy, z0=pz - 0.5,
+                        cx=hx, cy=hy, z0=flange_top - pad.flange_thickness_mm - 0.5,
                         axis=(0.0, 0.0, 1.0), length=pad.flange_thickness_mm + 1.0))
     return steps
 

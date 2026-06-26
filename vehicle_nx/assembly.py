@@ -943,13 +943,14 @@ def subframe_point_world(p: VehicleParams, axle: str, kind: str, name: str,
     return [o[i] + loc[i] for i in range(3)]
 
 
-def chassis_pad_world(axle: str, side: str) -> Optional[List[float]]:
-    """The chassis subframe mount-pad centre in VEHICLE coordinates (the chassis is
-    identity at the origin, so this is already a vehicle coordinate)."""
+def chassis_pad_world(axle: str, fore_aft: str, side: str) -> Optional[List[float]]:
+    """The chassis subframe mount-pad centre (one of the FOUR per axle) in VEHICLE
+    coordinates (the chassis is identity at the origin, so this is already a vehicle
+    coordinate)."""
     try:
         from chassis_nx.blueprint import subframe_pad_centre
         from chassis_nx.params import ChassisParams
-        return list(subframe_pad_centre(ChassisParams(), axle, side))
+        return list(subframe_pad_centre(ChassisParams(), axle, fore_aft, side))
     except Exception:
         return None
 
@@ -1365,28 +1366,31 @@ def _mating_issues(p: VehicleParams, driven: List[str]) -> List[str]:
         sub_axles = ["front", "rear"] if L.suspension_corners >= 4 else driven
         for ax in sub_axles:
             # subframe chassis pads coincide with the chassis subframe mount pads. The
-            # chassis builds ONE pad per side at the axle x-station; the subframe has
-            # fore/aft pads straddling it, so compare the |Y| + Z mating plane (the pad
-            # bolts UP into the rail-top boss).
+            # the chassis now builds FOUR pads per axle (fore + aft, l + r) that COINCIDE
+            # with the subframe's four pad flanges. Verify each subframe pad lands on a
+            # chassis pad in full X + |Y| + Z (the l/r label is flipped between the two
+            # packages -- chassis rail 'l' is -Y, subframe 'l' is +Y -- so match on |Y|).
             if f.include_chassis:
                 try:
+                    ch_pads = [chassis_pad_world(ax, fa, s)
+                               for fa in ("fore", "aft") for s in ("l", "r")]
+                    ch_pads = [c for c in ch_pads if c is not None]
                     for s in ("l", "r"):
-                        ch = chassis_pad_world(ax, s)
-                        if ch is None:
-                            continue
-                        ok = False
                         for fa in ("fore", "aft"):
                             sub = subframe_point_world(p, ax, "pad", fa, s)
-                            if sub is None:
+                            if sub is None or not ch_pads:
                                 continue
-                            if (abs(abs(sub[1]) - abs(ch[1])) <= _MATE_TOL_MM
-                                    and abs(sub[2] - ch[2]) <= _MATE_TOL_MM):
-                                ok = True
-                        if not ok:
-                            issues.append(
-                                "ICD §7.4.2: subframe %s %s-side pads do not land on the "
-                                "chassis rail-top mount pad (y=%.0f, z=%.0f) -- the cradle "
-                                "would not bolt to the chassis" % (ax, s, ch[1], ch[2]))
+                            landed = any(
+                                abs(c[0] - sub[0]) <= _MATE_TOL_MM
+                                and abs(abs(c[1]) - abs(sub[1])) <= _MATE_TOL_MM
+                                and abs(c[2] - sub[2]) <= _MATE_TOL_MM
+                                for c in ch_pads)
+                            if not landed:
+                                issues.append(
+                                    "ICD §7.4.2: subframe %s %s/%s pad (%.0f, %.0f, %.0f) "
+                                    "does not land on any chassis rail-top mount pad -- the "
+                                    "cradle would not bolt to the chassis"
+                                    % (ax, fa, s, sub[0], sub[1], sub[2]))
                 except Exception as exc:                       # pragma: no cover
                     issues.append("could not run the subframe<->chassis pad check at %s: %s" % (ax, exc))
 

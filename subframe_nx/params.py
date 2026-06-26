@@ -151,19 +151,21 @@ class CradleParams:
 
 @dataclass
 class PadParams:
-    """The chassis-pad interface: vertical riser posts that carry the cradle UP from
-    its base plane to the chassis subframe mount pads on the rail tops (ICD §7.2:
-    y = ±585, z ≈ 400 at the axle x-station). Each post tops out in a bolt-flange that
-    matches the chassis Subframe_Boss (chassis_nx mount_steps). Four pads (fore/aft ×
-    left/right) bolt the cradle to the chassis."""
+    """The chassis-pad interface: vertical riser posts that carry the cradle up to the
+    chassis subframe mount pads on the rail UNDERSIDE (ICD §7.2: y = ±585, z = rail
+    BOTTOM at the axle x-station). Each post tops out in a bolt-flange that seats against
+    the rail underside and bolts UP into the rail. Four pads (fore/aft × left/right) bolt
+    the cradle to the chassis. The cradle HANGS BELOW the rails (the realistic skateboard
+    arrangement) so the riser posts never pierce the rail box -- bolting to the rail TOP
+    would drive a Ø56 post straight THROUGH the rail (a 16 mm interpenetration)."""
     # chassis subframe-pad mating coordinates (vehicle frame, ICD §7.2). The chassis
-    # builds these at rail centre-line y = ±585 on the rail top z ≈ 400 at the axle
+    # builds these at rail centre-line y = ±585 on the rail UNDERSIDE at the axle
     # x-station; local X = pad_x_local (mirrored fore/aft about the axle station).
     pad_y_mm: float = 585.0                # rail centre-line |Y| (= chassis rail_centreline_y)
-    # rail-top mating plane (world Z). The chassis builds its rail top at z=390 and a
-    # subframe boss 14 mm above it; the subframe pad flange mates to that rail-top plane
-    # (the ICD §7.2 "z≈400" is approximate -- 390 is what chassis_nx actually builds).
-    pad_z_mm: float = 390.0
+    # rail-BOTTOM mating plane (world Z). The chassis builds its rail bottom at z=270
+    # (ground_clearance 140 + battery-tray 130); the subframe pad flange seats UP against
+    # that rail-underside plane and bolts into the rail. (= chassis rail_bottom.)
+    pad_z_mm: float = 270.0
     pad_x_local_mm: float = 175.0          # fore/aft pad offset from the axle station (±X local); set so the fore pad clears the anti-roll drop link (~local x 129)
     post_diameter_mm: float = 56.0         # riser-post OD (carries the cradle up to the pad)
     flange_diameter_mm: float = 72.0       # pad bolt-flange OD (clears the anti-roll link outboard of the rail)
