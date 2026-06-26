@@ -127,8 +127,12 @@ def _build_part(blueprint, out_path, log):
     # warning the motor avoided only because the engine's default map is the motor's).
     named = 0
     for step in blueprint.get("build_steps", []):
-        if step.get("boolean") != "create":
-            continue
+        # Name from body_name for ANY step the builder REGISTERED a body for -- not only
+        # boolean=="create": the engine's tube branch always builds a standalone body
+        # (it ignores the step's unite/subtract op) and registers it under the step id,
+        # so a tube with boolean="unite" (e.g. a brake-pilot ring) is a real, registered,
+        # body that the old create-only filter left unnamed. A subtract/failed-unite that
+        # registered no body is simply absent from builder.bodies and skipped.
         body = builder.bodies.get(step["id"])
         nm = step.get("body_name")
         if body is not None and nm:
@@ -138,6 +142,12 @@ def _build_part(blueprint, out_path, log):
             except Exception:
                 pass
     log("named %d subsystem bodies from blueprint body_name" % named)
+    # Bake the bodies static + delete construction curves so the saved subsystem .prt is
+    # a clean static part (no stray tiny Line objects -- e.g. the helical-gear loft
+    # sections -- which NX Check-Mate flags as "Objects - Tiny"). Done AFTER naming so the
+    # display names are preserved; generated parts are regenerated from the blueprint, so
+    # dropping feature history costs nothing and the exported STEP (bodies-only) is identical.
+    builder.remove_parameters_and_clean_curves()
     eng._save(part)
     log("built subsystem part: %s (%d step error(s))" % (out_path, len(builder.errors)))
     try:

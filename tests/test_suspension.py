@@ -283,17 +283,18 @@ def test_every_boolean_targets_an_existing_create():
 
 
 def test_links_are_true_3d_not_flat_z_plates():
-    """The redesign forbids flat +Z plates for the links: the control-arm LEGS must be
-    PRISMS along their true 3D axes (axis not a pure +Z column), the toe/tie link a
-    round bar along its true axis, and every spring/damper body axis-placed (origin3
-    set). Ball-joint hub bosses / eye-ends (round) are allowed alongside the legs."""
+    """The redesign forbids flat +Z plates for the links: the control-arm LEGS must run
+    along their true 3D axes (axis not a pure +Z column), the toe/tie link a round bar
+    along its true axis, and every spring/damper body axis-placed (origin3 set).
+    Ball-joint hub bosses / eye-ends (round) are allowed alongside the legs."""
     blue = bp.generate(SuspensionParams())
-    # the A-arm LEGS (the structural members) are the prisms; assert they are true 3D.
-    # The arm hub EYE (a ring-prism coaxial with the near-vertical kingpin axis) is NOT
-    # a leg, so filter to the leg segments (ids carry "fore"/"aft").
+    # the A-arm LEGS (the structural members) are round bars; assert they are true 3D.
+    # The arm hub EYE (a ring coaxial with the near-vertical kingpin axis) is NOT a leg,
+    # so filter to the leg bodies (ids carry "fore"/"aft", and exclude the bored eyes).
     leg_steps = [s for s in blue["build_steps"]
-                 if s["role"] in ("lower_arm", "upper_arm") and s["kind"] == "prism"
-                 and ("fore" in s["id"] or "aft" in s["id"])]
+                 if s["role"] in ("lower_arm", "upper_arm")
+                 and s["kind"] in ("prism", "loft_twist", "cylinder")
+                 and ("fore" in s["id"] or "aft" in s["id"]) and "eye" not in s["id"]]
     assert leg_steps
     for s in leg_steps:
         ax = s["axis"]
@@ -452,20 +453,19 @@ def test_every_link_spans_its_two_hardpoints():
     steps = {s["id"]: s for s in blue["build_steps"]}
     tol = 55.0  # mm: a ball-joint boss / bushing eye radius + the kingpin BJ offset
 
-    # control-arm legs: each leg runs from near its inboard pickup to near the ball joint
-    # (the leg now starts at the bored pickup eye and ends at the arm hub eye, which is
-    # offset from the ball joint along the kingpin by the ball-joint length).
+    # control-arm legs: each leg is now ONE lofted taper whose two ENDS run from near its
+    # inboard pickup to near the ball joint (the leg starts at the bored pickup eye and
+    # ends at the arm hub eye, offset from the ball joint along the kingpin).
     cases = [
-        ("lower_arm_fore_r_s0", "lower_pickup_fore", "lower_arm_fore_r_s2", "lower_ball_joint"),
-        ("lower_arm_aft_r_s0", "lower_pickup_aft", "lower_arm_aft_r_s2", "lower_ball_joint"),
-        ("upper_arm_fore_r_s0", "upper_pickup_fore", "upper_arm_fore_r_s2", "upper_ball_joint"),
-        ("upper_arm_aft_r_s0", "upper_pickup_aft", "upper_arm_aft_r_s2", "upper_ball_joint"),
+        ("lower_arm_fore_r", "lower_pickup_fore", "lower_ball_joint"),
+        ("lower_arm_aft_r", "lower_pickup_aft", "lower_ball_joint"),
+        ("upper_arm_fore_r", "upper_pickup_fore", "upper_ball_joint"),
+        ("upper_arm_aft_r", "upper_pickup_aft", "upper_ball_joint"),
     ]
-    for in_id, in_hp, out_id, out_hp in cases:
-        a0, a1 = _axis_endpoints(steps[in_id])      # the inboard segment near the pickup
-        b0, b1 = _axis_endpoints(steps[out_id])     # the outboard segment near the ball joint
-        assert min(_dist(a0, hp[in_hp]), _dist(a1, hp[in_hp])) <= tol, in_id
-        assert min(_dist(b0, hp[out_hp]), _dist(b1, hp[out_hp])) <= tol, out_id
+    for leg_id, in_hp, out_hp in cases:
+        e0, e1 = _axis_endpoints(steps[leg_id])     # the lofted leg's two world ends
+        assert min(_dist(e0, hp[in_hp]), _dist(e1, hp[in_hp])) <= tol, leg_id
+        assert min(_dist(e0, hp[out_hp]), _dist(e1, hp[out_hp])) <= tol, leg_id
 
     # toe / tie link spans the toe pickup -> toe outboard (steering-arm) point
     a, b = _axis_endpoints(steps["toe_link_r"])

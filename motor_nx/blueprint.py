@@ -72,6 +72,11 @@ class BuildStep:
     cy: float = 0.0
     # extrude/revolve profile
     profile: Optional[List[Point]] = None   # extrude: [x,y]; revolve: [r,z]
+    # loft_twist ONLY: optional DIFFERENT top section (same point count as `profile`).
+    # When set, the loft tapers from `profile` at the base to `profile_top` at the top
+    # (a smooth one-body taper -- e.g. an A-arm leg fat at the pickup, slim at the eye)
+    # instead of lofting one constant section. Defaults to `profile` (no taper).
+    profile_top: Optional[List[Point]] = None
     z0: float = 0.0
     length: float = 0.0
     # circular pattern about Z
@@ -118,6 +123,8 @@ class BuildStep:
         d = asdict(self)
         if self.profile is not None:
             d["profile"] = [[round(x, 6), round(y, 6)] for (x, y) in self.profile]
+        if self.profile_top is not None:
+            d["profile_top"] = [[round(x, 6), round(y, 6)] for (x, y) in self.profile_top]
         return d
 
 

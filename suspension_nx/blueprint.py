@@ -132,6 +132,21 @@ def _lerp(a: Vec3, b: Vec3, t: float) -> Vec3:
             a[2] + (b[2] - a[2]) * t)
 
 
+def _dot(a: Vec3, b: Vec3) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _nearest_on_seg(p: Vec3, a: Vec3, b: Vec3) -> Vec3:
+    """The point on the segment a->b closest to p (the foot of the perpendicular,
+    clamped to the segment).  Used to ROOT a bracket on a member's leg: rooting at this
+    point guarantees the bracket's first segment overlaps the leg solid, so the unite
+    connects (a disjoint root leaves the bracket a floating, unnamed lump)."""
+    ab = _sub(b, a)
+    denom = _dot(ab, ab) or 1.0
+    t = max(0.0, min(1.0, _dot(_sub(p, a), ab) / denom))
+    return _add(a, _scale(ab, t))
+
+
 def rod_d_of(p: SuspensionParams) -> float:
     """The toe / tie-rod shank diameter (shared by the knuckle steering eye and the toe
     link so their clevis bores match)."""
@@ -250,8 +265,13 @@ def _coil_turns(steps: List[BuildStep], step_id: str, body_name: str,
     turn_len = min(wire_d, 0.7 * pitch)
     for i in range(n_turns):
         c = _add(seat, _scale(w, (i + 0.5) * pitch))
+        # each turn gets a UNIQUE body_name suffix (Coil_Spring_R_000..006) so the
+        # vehicle assembler -- which names bodies straight from body_name -- gives every
+        # turn a distinct name instead of 7x the same "COIL_SPRING_R" (the inspector's
+        # duplicate-name info).  The standalone builder already uniquifies via its
+        # per-role counter; this aligns the assembler path with it.
         steps.append(F.ring_body(
-            "%s_turn%d" % (step_id, i), "spring", body_name, c, w,
+            "%s_turn%d" % (step_id, i), "spring", "%s_%03d" % (body_name, i), c, w,
             ring_outer, ring_bore, turn_len, color, material))
 
 
@@ -413,31 +433,56 @@ def _control_arm(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str,
     # the two members sit on opposite sides of the joint and never share volume.
     toward = _unit(_sub(socket, bj))
     eye_c = _sub(bj, _scale(toward, _BJ_HALF_SEP))
-    eye_od = bj_d * 1.9
+    # the eye OD is sized so the rectangular LEG cross-section embeds well inside the
+    # round eye where they meet.  If the eye OD ~= the leg width, a flat leg side face
+    # sits TANGENT to the eye cylinder and NX leaves a spiky/sliver trim face (the
+    # Check-Mate "Faces - Spikes/Cuts" defect, shortest edge ~0.1 mm).  Sizing the eye
+    # to comfortably exceed the leg's cross-section DIAGONAL turns those tangencies into
+    # clean chord cuts.  (A real A-arm ball-joint boss is a chunky hub, larger than the
+    # arm section, so this is also more realistic.)
+    # ROUND-BAR legs (below) join the ROUND eye in a clean cylinder-cylinder boolean -- a
+    # smooth lens-shaped intersection curve with NO sharp corners -- so they cannot leave
+    # the thin sliver/spike trim faces a rectangular leg does where its FLAT faces graze
+    # the round eye (the Check-Mate "Faces - Spikes/Cuts" defect).  The toe link and the
+    # anti-roll drop link are round bars for exactly this reason and never spiked.  A
+    # round leg's circular section is perpendicular to its (radial) axis, so it does NOT
+    # reach radially toward the bore -- the bar stays ~leg_out from the kingpin axis, well
+    # clear of the ball-joint bore.
+    leg_d = 0.5 * (w_out + h_out)                # round control-arm leg-bar diameter
+    eye_od = bj_d * 1.9                          # ball-joint boss OD (round)
     eye_bore = bj_d                              # ball housing OD == this bore (press fit)
+    eye_len = max(bj_d * 1.1, leg_d + 8.0)       # contain the round leg bar in the eye barrel
 
     # 1) hub EYE = the create body the legs unite into (a ring around the ball-joint
     #    housing, coaxial with the kingpin axis).  The legs blend into the eye OD (one
     #    united body); the eye's real bore is what the ball-joint housing presses into.
     steps.append(F.ring_body(
         arm_id, role, "%s_Arm_Hub_%s" % (prefix.title(), U),
-        eye_c, kp_axis, eye_od, eye_bore, bj_d * 1.1, COL_ARM, "arm_steel"))
+        eye_c, kp_axis, eye_od, eye_bore, eye_len, COL_ARM, "arm_steel"))
 
     # 2) fore + aft legs from the inboard PICKUP EYES to the hub eye.  Each leg ends at
     #    the hub-eye OUTER face (so the solid leg never surrounds the ball stud) and
     #    starts at a bored PICKUP EYE (so the leg never fills the bushing can -- the
     #    bushing presses into the eye bore, the bolt runs transverse through it).
     pivots = {}
+    arm_legs = {}                                # nm -> (leg_in, leg_out) for bracket rooting
     for nm, pt in (("fore", pf), ("aft", pa)):
         pivot = _transverse(_sub(eye_c, pt))     # transverse bushing/bolt pivot axis
         pivots[nm] = (pt, pivot)
-        # leg from a point just outboard of the pickup eye -> the hub-eye outer face
+        # leg from just outboard of the pickup eye -> into the hub-eye boss.  The tip sits
+        # at 0.38*eye_od from the eye centre: inside the ring OD (0.95*bj_d) for a real
+        # cylinder-cylinder overlap, yet ~1.7*bj_d - safely OUTSIDE the bore radius
+        # (0.5*bj_d), so the round bar never reaches the (pre-bored) eye void where the
+        # ball-joint housing seats.
         leg_in = _add(pt, _scale(_unit(_sub(eye_c, pt)), bush_d * 0.55))
-        leg_out = _add(eye_c, _scale(_unit(_sub(pt, eye_c)), eye_od * 0.45))
-        _tapered_leg(steps, "%s_%s_%s" % (role, nm, tag), role,
-                     "%s_Arm_%s_%s" % (prefix.title(), nm.title(), U), leg_in, leg_out,
-                     w_in, w_out, h_in, h_out, COL_ARM, "arm_steel",
-                     u_dir=(0.0, 0.0, 1.0), target=arm_id)
+        leg_out = _add(eye_c, _scale(_unit(_sub(pt, eye_c)), eye_od * 0.38))
+        arm_legs[nm] = (leg_in, leg_out)
+        # ROUND leg bar (a solid cylinder, like the toe / anti-roll links) -- a clean
+        # cylinder-cylinder union into the round eye, no flat-face tangency slivers.
+        steps.append(_axis_cyl(
+            "%s_%s_%s" % (role, nm, tag), role,
+            "%s_Arm_%s_%s" % (prefix.title(), nm.title(), U), leg_in, leg_out,
+            leg_d, COL_ARM, material="arm_steel", boolean="unite", target=arm_id))
         # PICKUP EYE: a bored boss UNITED into the arm at the pickup (the leg reaches it,
         # so the unite is connected); the bushing can presses into this eye bore with a
         # clearance gap (eye bore = can OD + 2*clr, so the fit reads clean, not as
@@ -478,7 +523,7 @@ def _control_arm(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str,
                           bush_d, bush_l, F.bolt_clearance(bush_d * 0.3))
         F.bolt_assembly(steps, tag, U, "%s_%s" % (prefix, nm), pt, pivot,
                         bush_l, sb)
-    return arm_id
+    return arm_id, {"eye_c": eye_c, "legs": arm_legs}
 
 
 # --------------------------------------------------------------------------- #
@@ -513,9 +558,10 @@ def corner_steps(p: SuspensionParams, tag: str, mirror: bool) -> List[BuildStep]
     bush_d = arm.bushing_diameter_mm
 
     # --- LOWER CONTROL ARM: a proper A-ARM, ONE united body, ball joint to knuckle -
-    lower_arm_id = _control_arm(steps, p, tag, U, "lower", P("lower_ball_joint"),
-                                P("lower_pickup_fore"), P("lower_pickup_aft"),
-                                sockets["lbj"], kp_axis, w_in, w_out, h_in, h_out, bush_d)
+    lower_arm_id, lower_arm_geo = _control_arm(
+        steps, p, tag, U, "lower", P("lower_ball_joint"),
+        P("lower_pickup_fore"), P("lower_pickup_aft"),
+        sockets["lbj"], kp_axis, w_in, w_out, h_in, h_out, bush_d)
 
     # --- UPPER CONTROL ARM (multilink / double_wishbone only) ------------------- #
     if g.type in ("multilink", "double_wishbone"):
@@ -531,7 +577,7 @@ def corner_steps(p: SuspensionParams, tag: str, mirror: bool) -> List[BuildStep]
 
     # --- ANTI-ROLL (STABILISER) DROP LINK: link + two eyes UNITED into one body -- #
     if a.enabled:
-        _antiroll_link(steps, p, tag, U, P, lower_arm_id)
+        _antiroll_link(steps, p, tag, U, P, lower_arm_id, lower_arm_geo)
     return steps
 
 
@@ -600,12 +646,15 @@ def _toe_link(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str, P,
 
 
 def _antiroll_link(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str, P,
-                   arm_id: str) -> None:
+                   arm_id: str, arm_geo: Dict[str, Any]) -> None:
     """The anti-roll DROP LINK as ONE united body (a slender shank + an eye at each end).
     The drop link runs FORE of (offset +X from) the control arm so it never buries into
     the arm; a cast BRACKET on the lower arm reaches out to the lower eye, and the joint
     is a bolt through the stacked bracket-eye + drop-link eye (a real clevis).  The eyes
-    pivot transverse to the link so the bolt head/nut sit clear to the side."""
+    pivot transverse to the link so the bolt head/nut sit clear to the side.
+
+    ``arm_geo`` carries the lower arm's leg endpoints (from _control_arm) so the bracket
+    can be rooted ON a leg -- see br_root below."""
     a = p.antiroll
     lo0 = P("arb_link_lower")
     hi0 = P("arb_link_upper")
@@ -640,7 +689,16 @@ def _antiroll_link(steps: List[BuildStep], p: SuspensionParams, tag: str, U: str
     # EYE RING.  The bracket eye is a STANDALONE kind="tube" ring (atomic create+bore --
     # never "tool outside target"); the bracket-leg tip reaches into it (touching) and
     # the joint bolt threads the ring + the drop-link lower eye.
-    br_root = lo0                                # on the arm leg (overlaps it -> connects)
+    # ROOT the bracket ON the lower arm: project the ARB-pickup hardpoint onto the
+    # NEAREST arm leg, so the bracket's first (root) segment overlaps the leg solid and
+    # the unite CONNECTS.  The old root = the bare arb_link_lower hardpoint sat ~30 mm
+    # OFF the leg centreline, so every bracket segment missed the arm -> the unite left
+    # 3 floating, unnamed lumps (the inspector's "3 unnamed bodies").  Projecting onto
+    # the leg fixes the structural disconnect AND removes the unnamed bodies.
+    legs = (arm_geo or {}).get("legs", {})
+    cand = [(_norm(_sub(_nearest_on_seg(lo0, la, lb), lo0)), _nearest_on_seg(lo0, la, lb))
+            for (la, lb) in legs.values()]
+    br_root = min(cand, key=lambda c: c[0])[1] if cand else lo0
     # stacked along the pivot from the drop eye, with a 1.5 mm face gap so the touching
     # clevis faces do not sample as interference.
     br_eye_c = _add(lo, _scale(pivot, eye_len + 1.5))

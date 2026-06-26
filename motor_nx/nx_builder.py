@@ -305,6 +305,10 @@ class MotorBuilder:
         inline boolean (create/unite/subtract) when ThroughCurvesBuilder exposes one (it
         shares the Feature builder's BooleanOperation). Returns (feature, boolean_applied)."""
         profile = step["profile"]
+        # optional DIFFERENT top section -> a smooth one-body TAPER (e.g. an A-arm leg
+        # fat at the pickup, slim at the eye). Same point count as `profile`. Defaults to
+        # `profile` (a constant section, the original behaviour).
+        profile_top = step.get("profile_top") or profile
         base = self._axis_base(step)
         axis = step.get("axis", [0.0, 0.0, 1.0])
         u_dir = step.get("u_dir", [1.0, 0.0, 0.0])
@@ -314,7 +318,7 @@ class MotorBuilder:
         _, _, w = self._prism_frame(axis, u_dir)          # w = unit axis
         top = (base[0] + w[0] * length, base[1] + w[1] * length, base[2] + w[2] * length)
         bot_curves = self._lines_from_profile_3d(self._rotate2d(profile, start), base, axis, u_dir)
-        top_curves = self._lines_from_profile_3d(self._rotate2d(profile, start + twist), top, axis, u_dir)
+        top_curves = self._lines_from_profile_3d(self._rotate2d(profile_top, start + twist), top, axis, u_dir)
         tcb = self.part.Features.CreateThroughCurvesBuilder(NXOpen.Features.Feature.Null)
         tcb.SectionsList.Append(self._section(bot_curves))
         tcb.SectionsList.Append(self._section(top_curves))
@@ -694,6 +698,38 @@ class MotorBuilder:
         else:
             self.log("WARN no bodies were named -- Body.SetName returned/raised; "
                      "tell me and I will switch to named LAYERS instead.")
+
+    def remove_parameters_and_clean_curves(self):
+        """Bake every solid body STATIC (Remove Parameters) then delete any leftover
+        construction curves, so the saved .prt is a clean static part with NO stray tiny
+        Line objects (NX Check-Mate "Objects - Tiny" -- e.g. the 76 gear-loft section
+        lines). A generated part is always regenerated from its blueprint, so feature
+        history has no value; the solids + their display names are preserved. The loft
+        section curves can't be deleted while the loft feature still references them
+        (that just undoes the loft), so we drop the parametric history FIRST, which
+        orphans the curves, then remove them. Call this AFTER body naming -- it preserves
+        names, but the id->body registry may go stale, so don't use self.bodies after.
+        Advisory: any failure is logged and the build/save continues unchanged."""
+        try:
+            solids = [b for b in self.part.Bodies if b.IsSolidBody]
+            if solids:
+                rpb = self.part.Features.CreateRemoveParametersBuilder()
+                try:
+                    rpb.Objects.Add(solids)
+                    rpb.Commit()
+                finally:
+                    rpb.Destroy()
+        except Exception as exc:
+            self.errors.append("WARN remove-parameters: %s" % str(exc)[:140])
+        try:
+            curves = list(self.part.Curves)
+            if curves:
+                _SESSION.UpdateManager.AddToDeleteList(curves)
+                _SESSION.UpdateManager.DoUpdate(
+                    _SESSION.SetUndoMark(NXOpen.Session.MarkVisibility.Invisible, "curve cleanup"))
+                self.log("cleaned %d construction curve(s)" % len(curves))
+        except Exception as exc:
+            self.errors.append("WARN curve cleanup: %s" % str(exc)[:140])
 
     def export_parts(self, base, flavor="ap242"):
         """Export each manufacturable COMPONENT as its own STEP file (piece-by-piece

@@ -344,6 +344,53 @@ def run_checks(bodies, tags, cfg, lw):
     return findings
 
 
+def _cm_obj_locate(ro):
+    """For a Check-Mate flagged result (a Validate.ResultObject wrapping a Face / Edge /
+    Body), return (owning_body_name, location[xyz], kind) so a finding can name WHICH
+    body the defect is on and roughly WHERE.
+
+    The wrapper's `.Object` property is the real NX object (NULL for non-geometric
+    results); faces/edges expose GetBody() to reach the owning solid; a Body owns
+    itself. Location is the bbox centre of the flagged geometry (falling back to the
+    owning body). All best-effort -- never raises."""
+    # unwrap the ResultObject -> the real NX object (Face / Edge / Body)
+    geo = ro
+    try:
+        inner = getattr(ro, "Object", None)
+        if inner is not None:
+            geo = inner
+    except Exception:
+        geo = ro
+    kind = type(geo).__name__
+    owner = geo
+    try:
+        getb = getattr(geo, "GetBody", None)
+        if getb is not None:
+            owner = getb()
+    except Exception:
+        owner = geo
+    body_name = ""
+    for t in (owner, geo, ro):
+        try:
+            nm = t.Name
+            if nm:
+                body_name = nm
+                break
+        except Exception:
+            continue
+    loc = None
+    for t in (geo, owner):
+        if t is None:
+            continue
+        try:
+            bb = _bbox(t.Tag)
+            loc = [round((bb[i] + bb[i + 3]) / 2.0, 2) for i in range(3)]
+            break
+        except Exception:
+            continue
+    return body_name, loc, kind
+
+
 def _checkmate_findings(part, lw):
     """Run NX's NATIVE Check-Mate validator (headless) with the curated geometry/standard
     checkers and turn each non-passing test into a finding. This is language-agnostic and
@@ -396,14 +443,35 @@ def _checkmate_findings(part, lw):
             if sev is None:
                 continue  # passed
             try:
-                nobj = len(p.GetObjectResultObjects(t))
+                objs = list(p.GetObjectResultObjects(t))
             except Exception:
-                nobj = 0
+                objs = []
+            nobj = len(objs)
+            # locate the flagged objects: which body, what kind, roughly where
+            located = []
+            seen_bodies = []
+            for o in objs[:16]:
+                bn, loc, kind = _cm_obj_locate(o)
+                located.append((bn or "(unnamed)", kind, loc))
+                if bn and bn not in seen_bodies:
+                    seen_bodies.append(bn)
+            loc0 = next((l for (_, _, l) in located if l), None)
             name = t.Name
+            detail = "NX Check-Mate flagged %d object(s) (status %d)." % (nobj, code)
+            if located:
+                parts = []
+                for bn, kind, loc in located[:8]:
+                    where = (" @ (%.1f, %.1f, %.1f)" % (loc[0], loc[1], loc[2])) if loc else ""
+                    parts.append("%s on %s%s" % (kind, bn, where))
+                detail += " " + "; ".join(parts)
+                if nobj > 8:
+                    detail += "; ... (+%d more)" % (nobj - 8)
+            metric = {"checker": name, "status": code, "object_count": nobj}
+            if seen_bodies:
+                metric["bodies"] = seen_bodies
             out.append(_finding(
-                "checkmate", sev, "Check-Mate: %s" % name,
-                "NX Check-Mate flagged %d object(s) (status %d)." % (nobj, code),
-                metric={"checker": name, "status": code, "object_count": nobj},
+                "checkmate", sev, "Check-Mate: %s" % name, detail,
+                bodies=seen_bodies or None, location=loc0, metric=metric,
                 suggestion="Open Check-Mate (Analysis -> Examine Geometry / Check-Mate) on this "
                            "checker to locate and fix the flagged %d object(s)." % nobj))
         lw.WriteLine("checkmate: ran %d checker(s), %d non-passing" % (len(CHECKMATE_CHECKERS), len(out)))
