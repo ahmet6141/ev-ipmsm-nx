@@ -70,6 +70,13 @@ class RotorParams:
     lightening_holes: int = 0            # optional circular lightening/cooling holes (0 = none)
     lightening_hole_diameter: float = 10.0
     lightening_hole_pitch_radius: float = 45.0
+    # rotor STEP-SKEW (cogging / torque-ripple mitigation). The active rotor stack is
+    # built in `skew_segments` axial slices, each rotated a step further; the magnet
+    # pockets AND magnets skew together while the hairpin stator stays straight (as in
+    # production). skew_segments = 1 => straight rotor (no skew, the default).
+    # skew_angle_deg = 0 with segments > 1 => AUTO one slot pitch (360 / slot_count).
+    skew_segments: int = 1
+    skew_angle_deg: float = 0.0
 
 
 @dataclass

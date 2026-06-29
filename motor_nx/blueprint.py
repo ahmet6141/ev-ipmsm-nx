@@ -349,16 +349,36 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
         outer_radius=g.rotor_outer_radius, inner_radius=g.shaft_radius,
         z0=0.0, length=p.stack_length, drive_with_stack=True,
     ))
+    # rotor step-skew: K axial slices, each rotated a further `skew_step` so the
+    # rotor flux axis progresses along Z (cogging/ripple mitigation). K=1 => the
+    # original single full-length, stack-driven feature (no skew). skew_angle_deg=0
+    # with K>1 auto-targets one slot pitch -- the usual cogging-cancelling skew.
+    K_skew = max(1, int(r.skew_segments))
+    skew_total = r.skew_angle_deg if r.skew_angle_deg > 0 else (
+        360.0 / s.slot_count if K_skew > 1 else 0.0)
+    skew_step = skew_total / K_skew if K_skew > 1 else 0.0   # per-slice increment
+
     # 4) magnet pockets (V): two arms, each patterned over the poles
     for idx, poly in enumerate(magnet_pocket_polygons(p, g)):
-        steps.append(BuildStep(
-            id=f"magnet_pocket_{idx}", role="magnet_pocket_cut", kind="extrude",
-            boolean="subtract", target="rotor_steel",
-            body_name=f"Magnet_Pocket_{idx}", material="air", color=COL_ROTOR,
-            profile=poly, z0=0.0, length=p.stack_length,
-            pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
-            drive_with_stack=True,
-        ))
+        if K_skew == 1:
+            steps.append(BuildStep(
+                id=f"magnet_pocket_{idx}", role="magnet_pocket_cut", kind="extrude",
+                boolean="subtract", target="rotor_steel",
+                body_name=f"Magnet_Pocket_{idx}", material="air", color=COL_ROTOR,
+                profile=poly, z0=0.0, length=p.stack_length,
+                pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
+                drive_with_stack=True,
+            ))
+        else:
+            seg_len = p.stack_length / K_skew
+            for k in range(K_skew):
+                steps.append(BuildStep(
+                    id=f"magnet_pocket_{idx}_sk{k}", role="magnet_pocket_cut", kind="extrude",
+                    boolean="subtract", target="rotor_steel",
+                    body_name=f"Magnet_Pocket_{idx}_sk{k}", material="air", color=COL_ROTOR,
+                    profile=_rotate(poly, k * skew_step), z0=k * seg_len, length=seg_len,
+                    pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
+                ))
     # 4b) optional rotor lightening / cooling holes
     if r.lightening_holes > 0:
         steps.append(BuildStep(
@@ -376,17 +396,24 @@ def build_steps(p: MotorParams, g: em_design.DerivedGeometry) -> List[BuildStep]
     #    laminated stack they are not driven by the NX 'stack_length' expression,
     #    so editing stack_length in NX rescales the steel/winding but not the
     #    magnet segments; regenerate from params for a different stack length.
+    # axial segments serve eddy-loss control; when the rotor is step-skewed the skew
+    # slices ALSO segment the magnet (each slice rotated to follow its pocket), so the
+    # skew count drives the segmentation and every slice carries its skew offset.
     n_seg = max(1, int(p.material.magnet_segments_axial))
+    if K_skew > 1:
+        n_seg = max(n_seg, K_skew)
     seg_gap = p.material.magnet_seg_gap_mm if n_seg > 1 else 0.0
     seg_len = (p.stack_length - seg_gap * (n_seg - 1)) / n_seg
     for idx, poly in enumerate(magnet_polygons(p, g)):
         for j in range(n_seg):
             seg = "" if n_seg == 1 else "_seg%d" % j
+            off = j * skew_total / n_seg if K_skew > 1 else 0.0
+            prof = _rotate(poly, off) if off else poly
             steps.append(BuildStep(
                 id="magnet_%d%s" % (idx, seg), role="magnet", kind="extrude",
                 boolean="create", body_name="Magnet_%d%s" % (idx, seg),
                 material="NdFeB", color=COL_MAGNET,
-                profile=poly, z0=j * (seg_len + seg_gap), length=seg_len,
+                profile=prof, z0=j * (seg_len + seg_gap), length=seg_len,
                 pattern_count=r.pole_count, pattern_angle_deg=360.0 / r.pole_count,
             ))
 

@@ -150,3 +150,67 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)
+
+
+# --------------------------------------------------------------------------- #
+# rotor step-skew (cogging/ripple mitigation)
+# --------------------------------------------------------------------------- #
+def _steps_by_role(p, role):
+    return [s for s in blueprint.generate(p)["build_steps"] if s["role"] == role]
+
+
+def test_skew_off_by_default_matches_full_length_pockets():
+    """skew_segments == 1 must reproduce the original single full-length pockets."""
+    p = MotorParams()
+    assert p.rotor.skew_segments == 1
+    pockets = _steps_by_role(p, "magnet_pocket_cut")
+    assert pockets and all("_sk" not in s["id"] for s in pockets)
+    assert all(s["length"] == p.stack_length and s["drive_with_stack"] for s in pockets)
+
+
+def test_skew_slices_pockets_and_magnets():
+    K = 4
+    p = MotorParams.from_dict({"rotor": {"skew_segments": K}})
+    pockets = _steps_by_role(p, "magnet_pocket_cut")
+    # every pocket arm is split into K rotated slices (ids carry _sk0.._sk{K-1})
+    assert pockets and all("_sk" in s["id"] for s in pockets)
+    assert len(pockets) % K == 0
+    # the K slices of one arm tile the stack length with no overlap
+    arm0 = sorted((s for s in pockets if s["id"].startswith("magnet_pocket_0_sk")),
+                  key=lambda s: s["z0"])
+    assert len(arm0) == K
+    seg = p.stack_length / K
+    for k, s in enumerate(arm0):
+        assert abs(s["z0"] - k * seg) < 1e-6
+        assert abs(s["length"] - seg) < 1e-6
+        assert not s["drive_with_stack"]          # sliced features use literal length
+    # magnets are segmented at least K-fold and skewed too
+    magnets = _steps_by_role(p, "magnet")
+    assert len(magnets) >= K
+
+
+def test_skew_auto_angle_is_one_slot_pitch():
+    """skew_angle_deg == 0 with skew_segments > 1 must auto-target one slot pitch."""
+    K = 4
+    p = MotorParams.from_dict({"rotor": {"skew_segments": K}})
+    pockets = sorted((s for s in _steps_by_role(p, "magnet_pocket_cut")
+                      if s["id"].startswith("magnet_pocket_0_sk")), key=lambda s: s["z0"])
+    # rotation between consecutive slices = (360/slots)/K; recover it from the
+    # centroid angle of each slice's profile
+    def centroid_angle(prof):
+        cx = sum(x for x, y in prof) / len(prof)
+        cy = sum(y for x, y in prof) / len(prof)
+        return math.degrees(math.atan2(cy, cx))
+    step = (360.0 / p.stator.slot_count) / K
+    a0 = centroid_angle(pockets[0]["profile"])
+    a1 = centroid_angle(pockets[1]["profile"])
+    assert abs((a1 - a0) - step) < 0.3   # ~1.667 deg per slice for 54 slots, K=4
+
+
+def test_improved_v2_config_is_buildable():
+    import json
+    cfg = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                       "configs", "improved_v2.json")))
+    p = MotorParams.from_dict(cfg["base"])
+    assert em_design.validate(p) == []
+    assert p.rotor.skew_segments == 4 and p.material.magnet_grade == "N42EH"
