@@ -45,3 +45,7 @@ Thumbs.db
 
 # generated manufacturing package (regenerate via cli package)
 /manufacturing/
+/mfg/
+
+# zipped deliverables (regenerate from source)
+*.zip
