@@ -1,0 +1,21 @@
+* SiC half-bridge DOUBLE-PULSE TEST -- traction inverter switching-loss eval
+* RUN ON: LTspice (Windows/macOS) or ngspice.  Vbus 400 V; load inductor sized to
+* reach ~peak phase current (386 A). Replace the generic switch with the vendor
+* SiC MOSFET .model / subcircuit (e.g. 750 V module) for real Eon/Eoff.
+.param Vbus=400 Lload=100u Ipk=386 Rg=2
+Vdc   dcp 0   {Vbus}
+* DC-link film cap (inverter_nx default 500 uF)
+Cdc   dcp 0   500u
+* high-side + low-side switches (generic; swap for vendor SiC model)
+S1    dcp sw  g1 0  SWMOD
+S2    sw  0   g2 0  SWMOD
+* freewheeling load inductor from midpoint to bus (double-pulse classic)
+Lld   sw  dcp {Lload}
+* gate drives: low-side two pulses (turn-on, off, on) -- classic DPT
+Vg2   g2 0 PULSE(0 15 1u 20n 20n 9u 12u)
+Vg1   g1 0 0
+.model SWMOD SW(Ron=5m Roff=1Meg Vt=5 Vh=0)
+.tran 50n 25u
+* measure: V(sw), I(Lld); switching energy = integral of V*I across the device
+.probe
+.end

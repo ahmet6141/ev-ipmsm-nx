@@ -49,3 +49,13 @@ Thumbs.db
 
 # zipped deliverables (regenerate from source)
 *.zip
+
+# FEA/analysis solver run artifacts (regenerate by running the validation scripts)
+spooles.out
+*.inp
+*.frd
+*.dat
+*.cvg
+*.sta
+*.12d
+analysis_runs/*.png
