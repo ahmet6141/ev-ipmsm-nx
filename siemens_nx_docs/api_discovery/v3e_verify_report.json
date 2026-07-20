@@ -1,0 +1,32 @@
+{
+  "tests": {
+    "T04_draft": {
+      "ok": true,
+      "info": {
+        "refmethod": "StationaryFace",
+        "ecs_tries": [
+          "Degrees: The given unit measure or measureRef is invalid.",
+          "deg: The given unit measure or measureRef is invalid."
+        ],
+        "ecs_units": "(empty)",
+        "append": "ecs OK",
+        "feature": "DRAFT"
+      }
+    },
+    "T05_thread": {
+      "ok": true,
+      "info": {
+        "shaft_pref": "MajorDiameter",
+        "set": [
+          "MajorDiameterExp",
+          "MinorDiameterExp",
+          "ShaftDiameterExp",
+          "PitchExp",
+          "AngleExp",
+          "ThreadLength"
+        ],
+        "feature": "SYMBOLIC_THREAD"
+      }
+    }
+  }
+}

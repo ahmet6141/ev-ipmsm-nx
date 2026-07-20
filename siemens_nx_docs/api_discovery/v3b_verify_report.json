@@ -1,0 +1,131 @@
+{
+  "tests": {
+    "T04_draft": {
+      "ok": false,
+      "info": {
+        "n_sides": 4,
+        "fsl_dir": [
+          "Append",
+          "Clear",
+          "ClearIndex",
+          "DeleteOption",
+          "Erase",
+          "FindIndex",
+          "FindItem",
+          "GetContents",
+          "Insert",
+          "Length",
+          "MoveToBottom",
+          "MoveToTop",
+          "Null",
+          "SetContents",
+          "Swap",
+          "Tag"
+        ],
+        "fsl_tries": [
+          "Append/2: No overload matches these arguments. The arguments passed ar"
+        ],
+        "fsl_add": "Append(1 args) OK"
+      },
+      "error": "Reference face or edge is missing. It may be consumed by another feature or suppressed.",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 50, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 173, in t04\n    feat = db.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Reference face or edge is missing. It may be consumed by another feature or suppressed.\n"
+    },
+    "T05_thread": {
+      "ok": false,
+      "info": {
+        "defaults": {
+          "standard": "",
+          "size": "",
+          "method": "",
+          "input": "0",
+          "type": "0"
+        },
+        "after_select": {
+          "standard": "",
+          "size": "",
+          "cyl_dia": 0.0
+        },
+        "symbolic_err": "Standard data not found. Specify different standard or edit standards data.",
+        "detailed_err": "Standard data not found. Specify different standard or edit standards data.",
+        "std_tries": [
+          "Metric Coarse: Standard data not found. Specify different standard or edit ",
+          "Metric Fine: Standard data not found. Specify different standard or edit ",
+          "Metric: Standard data not found. Specify different standard or edit ",
+          "Unified UNC: Standard data not found. Specify different standard or edit "
+        ]
+      },
+      "error": "no thread path worked",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 50, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 236, in t05\n    assert committed, \"no thread path worked\"\n           ^^^^^^^^^\nAssertionError: no thread path worked\n"
+    },
+    "T06_shell": {
+      "ok": true,
+      "info": {
+        "feature": "SHELL",
+        "faces_after": 11
+      }
+    },
+    "T10_pmi_note": {
+      "ok": true,
+      "info": {
+        "text_type": "TextWithEditControlsBuilder",
+        "text_dir": [
+          "GetEditorText",
+          "Null",
+          "SetEditorText",
+          "Tag",
+          "TextBlock",
+          "Validate"
+        ],
+        "sub_TextBlock_dir": [
+          "AddAttributeReference",
+          "AddEmbeddedAnnotation",
+          "AddExpressionReference",
+          "AddSymbol",
+          "CopyEmbeddedAnnotation",
+          "CreateEmbeddedAnnotationText",
+          "CustomSymbolScale",
+          "GetEmbeddedCustomSymbols",
+          "GetSymbolAlignment",
+          "GetText",
+          "Null",
+          "RemoveSymbol",
+          "SetSymbolAlignment",
+          "SetText",
+          "SymbolAlignmentType",
+          "SymbolAspectRatio",
+          "SymbolHeight",
+          "SymbolLength",
+          "SymbolPreferences",
+          "SymbolPreferencesType",
+          "SymbolScale",
+          "SymbolSizeMethod",
+          "SymbolSizingMethod",
+          "Tag",
+          "Validate"
+        ],
+        "text_set": "TextBlock.SetText",
+        "origin": "SetValue OK",
+        "note_type": "PmiNote"
+      }
+    },
+    "T11_headless_png": {
+      "ok": false,
+      "info": {
+        "v1_err": "Invalid object state",
+        "v2_err": "type object 'NXOpen.UF.DispImageFormat' has no attribute 'Png'"
+      },
+      "error": "headless PNG not possible (documented: GUI-only)",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 50, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 346, in t11\n    raise RuntimeError(\"headless PNG not possible (documented: GUI-only)\")\nRuntimeError: headless PNG not possible (documented: GUI-only)\n"
+    },
+    "T12_hole_package": {
+      "ok": false,
+      "info": {
+        "allowed": "OnlyPoints OK",
+        "tol": "set",
+        "position": "added"
+      },
+      "error": "Missing target body.",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 50, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3b_fix_verify.py\", line 374, in t12\n    feat = hp.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Missing target body.\n"
+    }
+  }
+}

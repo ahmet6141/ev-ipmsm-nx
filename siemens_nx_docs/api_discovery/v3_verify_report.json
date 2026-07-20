@@ -1,0 +1,91 @@
+{
+  "nx_version": "v2506",
+  "tests": {
+    "T01_base_solid": {
+      "ok": true,
+      "bodies": 1,
+      "faces": 8,
+      "edges": 14,
+      "volume_mm3": 151853.98163397447,
+      "area_mm2": 19570.796326794894,
+      "mass_kg": 1.189113862742266,
+      "centroid": [
+        1.293,
+        0.0,
+        16.422
+      ],
+      "units_len": 5
+    },
+    "T02_edge_blend": {
+      "ok": true,
+      "feature": "BLEND",
+      "chainset_index": 0,
+      "faces_before": 8,
+      "faces_after": 12,
+      "edges_blended": 4
+    },
+    "T03_chamfer": {
+      "ok": true,
+      "feature": "CHAMFER",
+      "faces_before": 12,
+      "faces_after": 13
+    },
+    "T04_draft": {
+      "ok": false,
+      "error": "Angle tolerance is too small.",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 104, in run_test\n    data = fn()\n           ^^^^\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 298, in t04\n    feat2 = db.CommitFeature()\n            ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Angle tolerance is too small.\n"
+    },
+    "T05_thread_symbolic": {
+      "ok": false,
+      "error": "Standard data not found. Specify different standard or edit standards data.",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 104, in run_test\n    data = fn()\n           ^^^^\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 328, in t05\n    feat = tb.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Standard data not found. Specify different standard or edit standards data.\n"
+    },
+    "T06_shell": {
+      "ok": false,
+      "error": "Tolerance error.",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 104, in run_test\n    data = fn()\n           ^^^^\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 361, in t06\n    feat2 = sb.CommitFeature()\n            ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Tolerance error.\n"
+    },
+    "T07_mirror_body": {
+      "ok": true,
+      "plane_prop": "SelectObject",
+      "bodylist": "MirrorBodyList.Add OK",
+      "plane": "Plane.Value=datum OK",
+      "feature": "MIRROR",
+      "bodies_before": 3,
+      "bodies_after": 4
+    },
+    "T08_material": {
+      "ok": true,
+      "loaded": "Steel",
+      "assigned": "AssignObjects OK"
+    },
+    "T09_mass_properties": {
+      "ok": true,
+      "volume_mm3": 151324.65998196354,
+      "area_mm2": 19258.492272672192,
+      "mass_kg": 1.1847207629987928,
+      "centroid": [
+        1.278,
+        -0.0,
+        16.397
+      ],
+      "units_len": 5
+    },
+    "T10_pmi_note": {
+      "ok": false,
+      "error": "'NXOpen.Annotations.TextWithEditControlsBuilder' object has no attribute 'SetText'",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 104, in run_test\n    data = fn()\n           ^^^^\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 447, in t10\n    b.Text.SetText([\"SENTINEL-UGV\", \"NX2506 VERIFIED\"])\n    ^^^^^^^^^^^^^^\nAttributeError: 'NXOpen.Annotations.TextWithEditControlsBuilder' object has no attribute 'SetText'\n"
+    },
+    "T11_headless_png": {
+      "ok": false,
+      "error": "Invalid object state",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 104, in run_test\n    data = fn()\n           ^^^^\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 477, in t11\n    ib = part.Views.CreateImageExportBuilder()\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Invalid object state\n"
+    },
+    "T12_hole_package": {
+      "ok": false,
+      "error": "The Tolerance Specification requires three numbers",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 104, in run_test\n    data = fn()\n           ^^^^\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_master_verify.py\", line 511, in t12\n    feat = hp.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: The Tolerance Specification requires three numbers\n"
+    }
+  },
+  "saved": "C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3_verify_part.prt"
+}

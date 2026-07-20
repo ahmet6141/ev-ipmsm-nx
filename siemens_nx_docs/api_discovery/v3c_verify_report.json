@@ -1,0 +1,58 @@
+{
+  "tests": {
+    "T04_draft": {
+      "ok": false,
+      "info": {
+        "sr_type": "ScCollector",
+        "stationary": "StationaryReference rules OK",
+        "append_ret": "NoneType"
+      },
+      "error": "Reference face or edge is missing. It may be consumed by another feature or suppressed.",
+      "trace": "b\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 47, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 167, in t04\n    feat = db.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Reference face or edge is missing. It may be consumed by another feature or suppressed.\n"
+    },
+    "T05_thread": {
+      "ok": false,
+      "info": {
+        "input": "ThreadTable",
+        "size": "M20.0 x 2.5",
+        "cyl_dia": 0.0,
+        "std_after": "Metric Coarse",
+        "size_after": "M20.0 x 2.5"
+      },
+      "error": "Standard data not found. Specify different standard or edit standards data.",
+      "trace": "t\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 47, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 208, in t05\n    feat = tb.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Standard data not found. Specify different standard or edit standards data.\n"
+    },
+    "T11_headless_png": {
+      "ok": false,
+      "info": {
+        "fmt_members": [
+          "BMP",
+          "COMPRESSED_TIFF",
+          "GIF",
+          "JPEG",
+          "PNG",
+          "TIFF",
+          "ValueOf",
+          "XWD"
+        ],
+        "bg_members": [
+          "INVALID_COLOR",
+          "ORIGINAL",
+          "ValueOf",
+          "WHITE"
+        ],
+        "fmt_used": "PNG"
+      },
+      "error": "The image file could not be created.",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 47, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 245, in t11\n    uf.Disp.CreateImage(png, fmt, bg)\nNXOpen.NXException: The image file could not be created.\n"
+    },
+    "T12_hole_package": {
+      "ok": false,
+      "info": {
+        "target": "SetTargetBodies OK"
+      },
+      "error": "The Tolerance Specification requires three numbers",
+      "trace": "t):\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 47, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3c_final_verify.py\", line 266, in t12\n    feat = hp.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: The Tolerance Specification requires three numbers\n"
+    }
+  }
+}

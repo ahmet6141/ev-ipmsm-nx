@@ -1,0 +1,41 @@
+{
+  "tests": {
+    "T04_draft": {
+      "ok": false,
+      "info": {
+        "expr_maker": "CreateSystemExpressionWithUnits",
+        "append2_err": "No overload matches these arguments. The arguments passed are... \n(NXOpen.ScColl",
+        "append": "(col) fallback"
+      },
+      "error": "Reference face or edge is missing. It may be consumed by another feature or suppressed.",
+      "trace": "web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3d_last_verify.py\", line 41, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3d_last_verify.py\", line 164, in t04\n    feat = db.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Reference face or edge is missing. It may be consumed by another feature or suppressed.\n"
+    },
+    "T05_thread_manual": {
+      "ok": false,
+      "info": {
+        "input": "Manual",
+        "start": "StartObject=top OK",
+        "set": [
+          "MajorDiameterExp",
+          "MinorDiameterExp",
+          "PitchExp",
+          "AngleExp",
+          "ThreadLength"
+        ]
+      },
+      "error": "Invalid shaft size. Must be between major and minor diameters.",
+      "trace": " \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3d_last_verify.py\", line 41, in run_test\n    fn(info)\n  File \"C:\\Users\\ahmet\\Desktop\\web\\askeri\\sentinel_ugv\\siemens_nx_docs\\api_discovery\\v3d_last_verify.py\", line 203, in t05\n    feat = tb.CommitFeature()\n           ^^^^^^^^^^^^^^^^^^\nNXOpen.NXException: Invalid shaft size. Must be between major and minor diameters.\n"
+    },
+    "T12_hole_package": {
+      "ok": true,
+      "info": {
+        "tols": [
+          "Tolerance"
+        ],
+        "feature": "HOLE PACKAGE",
+        "faces_before": 8,
+        "faces_after": 9
+      }
+    }
+  }
+}
